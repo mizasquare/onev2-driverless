@@ -1,0 +1,47 @@
+; onev2_winusb.inf
+;
+; Binds Microsoft's INBOX WinUSB driver (C:\Windows\System32\drivers\winusb.sys, MS-signed)
+; to interface 3 of the Apogee ONEv2 -- the vendor/iAP interface, which Windows enumerates as
+;   USB\VID_0C60&PID_0017&MI_03   ("iAP Interface", problem code 28 = no driver)
+;
+; It deliberately targets ONLY MI_03. The audio function (MI_00) is left alone so the inbox
+; usbaudio2.sys keeps trying to bind to it -- that is the compliance test we are iterating on.
+; This file installs no binaries of its own; it only references winusb.inf.
+;
+; Install (elevated):   Device Manager -> "iAP Interface" -> Update driver
+;                       -> Browse my computer for drivers -> point at this folder
+;                       -> accept the "Windows can't verify the publisher" warning.
+; Undo:                 Device Manager -> the device -> Uninstall device
+;                       -> tick "Attempt to remove the driver", then replug.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USBDevice
+ClassGuid   = {88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider    = %ProviderName%
+DriverVer   = 10/02/2026,1.0.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%ProviderName% = Models, NTamd64
+
+[Models.NTamd64]
+%DeviceName% = WinUsbInstall, USB\VID_0C60&PID_0017&MI_03
+
+[WinUsbInstall.NT]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[WinUsbInstall.NT.Services]
+Include = winusb.inf
+Needs   = WINUSB.NT.Services
+
+[WinUsbInstall.NT.HW]
+AddReg = DevInterfaceGuid
+
+[DevInterfaceGuid]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{713FB7E8-16B4-40AE-B706-1F52D43DC477}"
+
+[Strings]
+ProviderName = "ONEv2 firmware research (local)"
+DeviceName   = "Apogee ONEv2 vendor interface (WinUSB)"

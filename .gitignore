@@ -1,0 +1,32 @@
+# Vendor firmware and anything derived from it is never committed: it is Apogee's.
+firmware/*.bin
+*.patched.bin
+*.hex
+*.dmg
+*.pkg
+*.msi
+
+# Captures and generated analysis artefacts
+*.etl
+*.xml
+*.wav
+*.log
+usbtrace*
+classreq-result*.txt
+*phases.json
+
+# Third-party documentation
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

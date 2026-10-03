@@ -1,0 +1,159 @@
+# Apogee ONE (2nd gen) — driverless firmware patches
+
+Nine firmware patch rounds that make a 2013 **Apogee ONE for iPad & Mac** (USB `0c60:0017`,
+product string `ONEv2`) work with **no vendor driver and no host application** on Windows 11,
+macOS and iPad (USB-C), and then let the knob on the device switch its own microphone input.
+
+Vendor support for this box is winding down. These patches touch only the firmware's USB
+descriptor plus 82 bytes of code, so the device stops needing Apogee's software to be useful.
+
+| Platform | Record | Play | Input switching |
+|---|---|---|---|
+| Windows 11, inbox `usbaudio2.sys` | yes | yes | on the device |
+| macOS | yes | yes | on the device |
+| iPad USB-C | yes | yes | on the device |
+
+Measured, not assumed: capture levels, a 43.5 dB monotonic preamp sweep, 44.1/48/88.2/96 kHz in
+WASAPI exclusive mode, 16 minutes of idle with no re-enumeration, and an ETW capture of every USB
+class control request the host sends.
+
+## What each round fixed
+
+Rounds 1–8 are descriptor-only. **Three of the defects were Apogee's own**, invisible until a
+standards-compliant host finally parsed the descriptor:
+
+| Round | Change | Result |
+|---|---|---|
+| 1 | IAD `bInterfaceCount` 4→3, AC `wTotalLength`, duplicate `CLOCK_SOURCE` id | Event 34 persists; IF3 splits into its own node, which later becomes the WinUSB attach point |
+| 2 | remove the duplicate `CLOCK_SOURCE` | Event 34 persists |
+| 3 | clock `bmAttributes`, iso endpoint sync types, capture `bmChannelConfig` → 0 | Event 34 persists — this round changed nothing, and round 7 undid part of it |
+| 4 | **`FEATURE_UNIT bLength` 10→18** (ADC-2 §4.7.2.8: `6 + (nch+1)×4`) | **Event 34 stops.** The only outright spec violation in the descriptor |
+| 5 | mic `FEATURE_UNIT bmaControls` → 0 | it advertised a volume control the firmware never implemented |
+| 6 | `SELECTOR_UNIT iSelector` 21→0 | string 21 does not exist on this device; every index but 1–3 and 17–20 STALLs. `problem=0` follows |
+| 7 | capture `bmChannelConfig` 0x00 → 0x03 | gives the capture cluster the same stereo layout playback always had |
+| 8 | **remove `SELECTOR_UNIT 15` from the capture path** | **iPad records.** iPadOS could not build a capture path through a Selector Unit |
+| 9 | **82-byte code patch** | a long press in mic focus cycles Internal → External → External+48V |
+
+Round 8 is the one with a cost: removing the selector removes host-side input switching on
+Windows and macOS. Round 9 gives it back on the device itself, which is the only place that works
+on all three platforms.
+
+## You supply the firmware
+
+**No firmware images are in this repository.** They are Apogee's. Get your own:
+
+1. Download Apogee's **Maestro 2.5C** package for the ONE (`One iPad & Mac 2.5C.dmg`) from
+   Apogee's support pages.
+2. Extract `ONEv2_USB_Audio_Image0.bin` and `ONEv2_USB_Audio_Image1.bin` from the
+   `One Firmware Updater.app` bundle inside it.
+3. Put both in `firmware/`.
+
+Expected, so you can tell you have the right files:
+
+```
+ONEv2_USB_Audio_Image0.bin   98,488 bytes    linked for flash bank 0 at 0x80004000
+ONEv2_USB_Audio_Image1.bin  229,560 bytes    the same body relocated +0x20000
+both: bcdDevice 1.05, and a 340-byte config descriptor twice over at file 0x17614 / 0x17768
+```
+
+`patch_r9.py` checks several fingerprints before it writes anything, and refuses outright if your
+image is not the one these patches were written and tested against.
+
+## Use it
+
+Read [SAFETY.md](SAFETY.md) first. It is short and it matters.
+
+```bash
+# 1. build the patched images from your own firmware
+python patch/patch_r9.py
+
+# 2. bind WinUSB to interface 3 only (Windows; usbaudio2 keeps the audio function)
+#    install usb/onev2_winusb.inf against USB\VID_0C60&PID_0017&MI_03
+
+# 3. write the INACTIVE bank, then switch to it
+python usb/onev2_flash.py flash firmware/ONEv2_USB_Audio_Image0.R9.patched.bin \
+                                firmware/ONEv2_USB_Audio_Image1.R9.patched.bin
+python usb/onev2_flash.py activate 1      # or 0, whichever it just wrote
+
+# 4. check it
+python usb/r9-test.py
+```
+
+`r9-test.py` judges 26 checks by itself, then walks you through five physical long presses and
+decides pass or fail for each.
+
+Requires Python 3.11+, `pyusb` with a libusb backend, and `sounddevice`/`numpy` for the audio
+checks.
+
+## How the device is driven
+
+Flashing is **not DFU**. Vendor request `0xA9` against the running application, sub-command in
+`wValue`, index in `wIndex`, all integers big-endian. Vendor `0xA7` is a soft reset. There are two
+application banks and only the inactive one is ever written, so a bad image is one `activate` away
+from being undone.
+
+The control protocol was recovered from Apogee's own symbol names in their macOS updater binary:
+
+| bRequest | Dir | Len | Meaning |
+|---|---|---|---|
+| `0x28` | in | 3 | firmware version / hardware id |
+| `0x29` | in | 6 | knob and button event block — **read-to-clear**, byte 2 is a bitmask |
+| `0x33` | both | 1 | output attenuation |
+| `0x34` | both | 1 | mic preamp gain, signed dB |
+| `0x35` | both | 1 | output mute |
+| `0x36` | both | 1 | mic source: 0 internal, 1 external, 2 external + 48 V |
+| `0x3E` | both | 1 | instrument gain |
+| `0x48` | both | 1 | which level the knob adjusts: 0 instrument, 1 mic, 2 output |
+
+`bmRequestType` is `0x40` out / `0xC0` in, recipient **device**, so `wIndex` is 0 for all of
+these. On Windows this needs WinUSB bound to `MI_03`; on macOS libusb reaches it directly; on iOS
+it is not reachable at all, which is why round 9 exists.
+
+## Layout
+
+```
+patch/      patch_r9.py        the one to run; rounds 2..9, self-contained from stock images
+            avr32asm.py        a small AVR32 assembler and an independent disassembler
+            history/           rounds 2..8 on their own, for the record
+usb/        onev2_flash.py     the 0xA9 flasher: probe, dump, flash, verify, activate
+            r9-test.py         the acceptance test
+            knob-probe*.py     watch the UI state machine from outside while you work the knob
+            rate-probe.py      which sample rates the device really runs
+            selector-probe.py  whether the host drives the selector unit
+            verdict.ps1        Windows device nodes, audio endpoints, usbaudio2 event history
+            capture-classreq2.bat + exercise-classreq.py + parse-classreq.py
+                               ETW capture of the UAC2 class requests, decoded
+docs/       the reverse-engineering record
+firmware/   where your own images go
+```
+
+## Documentation
+
+Current:
+
+- [onev2-ui-state-machine.md](docs/onev2-ui-state-machine.md) — the front-panel state machine,
+  every RAM variable and transition with its flash address, and the round-9 patch in full
+- [onev2-control-protocol-RE.md](docs/onev2-control-protocol-RE.md) — the vendor protocol
+- [descriptor-diff-vs-knowngood.md](docs/descriptor-diff-vs-knowngood.md) — the descriptor, field
+  by field, against a compliant reference
+- [bootloader-dump-findings.md](docs/bootloader-dump-findings.md) — the stock Atmel DFU bootloader,
+  why a watchdog reset does **not** reach it, and why there is no fallback for a bad application
+- [FLASHING.md](docs/FLASHING.md) — the `0xA9` protocol in detail
+- [mfi-iap-usbc-watchdog.md](docs/mfi-iap-usbc-watchdog.md) — MFi/iAP, the USB-C transition, and
+  the ~9.11 s watchdog
+
+Superseded, kept because the reasoning is part of the record:
+
+- [CODE-PATCH-PLAN.md](docs/CODE-PATCH-PLAN.md) — a plan to hook the UAC2 class handler that turned
+  out to be unnecessary; the firmware already answers class requests
+- [ep0-map-verification.md](docs/ep0-map-verification.md) — includes a correction of a wrong
+  refutation of mine, left visible on purpose
+- [handoff-cloud-*.md](docs/) — briefs written for other analysis sessions
+
+## Credits and licence
+
+MIT, see [LICENSE](LICENSE).
+
+Apogee, ONE and Maestro are trademarks of their owner. This project is unaffiliated
+reverse-engineering for interoperability, carried out on hardware the author owns. It
+redistributes no vendor firmware, software or documentation.
