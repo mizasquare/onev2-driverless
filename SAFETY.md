@@ -69,8 +69,11 @@ it before running the test.
   erased there, but whether Apogee's own updater pads or truncates its fixed write window is
   unverified, so an appended page may never reach flash. Round 9 deliberately uses dead code inside
   the existing image instead.
-- **Flashing needs the vendor channel**, which on Windows means WinUSB bound to interface 3. If the
-  INF is not installed, nothing here can talk to the device.
+- **Flashing needs the vendor channel**, which on Windows means inbox `WinUSB.sys` bound to
+  interface 3. Without it nothing here can talk to the device. And when you bind it — with Zadig or
+  with `usb/onev2_winusb.inf` — **pick interface 3 and only interface 3**. Binding WinUSB to
+  interface 0 takes the audio function away from `usbaudio2`, and the device stops being a sound
+  card until you roll that back in Device Manager.
 
 ## If it goes wrong
 
