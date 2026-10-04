@@ -14,7 +14,8 @@ the ONE.
 
     python backup-stock.py                  # writes ../firmware/
     python backup-stock.py --out somewhere  # writes somewhere else
-    python backup-stock.py --force          # overwrite existing files, or accept a patched device
+    python backup-stock.py --overwrite      # replace files already in firmware/
+    python backup-stock.py --accept-non-factory   # save a bank that is not factory
 """
 import argparse, datetime, hashlib, os, struct, sys
 
@@ -44,8 +45,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                   "..", "firmware"))
-    ap.add_argument("--force", action="store_true",
-                    help="overwrite existing files, and proceed on an already-patched device")
+    ap.add_argument("--overwrite", "--force", dest="overwrite", action="store_true",
+                    help="replace files that already exist in the output directory")
+    ap.add_argument("--accept-non-factory", action="store_true",
+                    help="save a bank even though it does not hold factory firmware; what it writes is NOT a factory image, whatever the filename says")
     ap.add_argument("--iface", type=int, default=3)
     args = ap.parse_args()
     out = os.path.abspath(args.out)
@@ -141,11 +144,12 @@ What that means depends on which you are:
         if vs:
             print("\n  This device reports: %s"
                   % ", ".join("%x.%02x" % (v >> 8, v & 0xFF) for v in vs))
-        if not args.force:
-            print("Nothing written. --force writes what is actually on the banks anyway.")
+        if not args.accept_non_factory:
+            print("Nothing written. --accept-non-factory saves what is on the banks anyway,\n"
+                  "but what it writes will NOT be factory images, whatever the filenames say.")
             return 2
         good = sorted(files)
-        print("--force given: writing what is on the banks regardless.\n")
+        print("--accept-non-factory given: writing what is on the banks regardless.\n")
     elif len(good) == 1:
         other = 1 - good[0]
         print("""
@@ -156,8 +160,8 @@ The patcher needs both. The way out is to put the factory image back into bank
 %d as well and run this again -- but that needs the file this cannot give you.
 If you have no backup at all, get the images from Apogee's Maestro package once;
 after that this tool covers you.""" % (good[0], other, other))
-        if not args.force:
-            print("\nWriting only bank %d's file. --force would write both." % good[0])
+        if not args.accept_non_factory:
+            print("\nWriting only bank %d's file. --accept-non-factory would write both," % good[0])
         else:
             good = sorted(files)
 
@@ -167,8 +171,8 @@ after that this tool covers you.""" % (good[0], other, other))
     for bank in good:
         blob = files[bank]
         p = os.path.join(out, "ONEv2_USB_Audio_Image%d.bin" % bank)
-        if os.path.exists(p) and not args.force:
-            print("  %s already exists, left alone (use --force to overwrite)" % p)
+        if os.path.exists(p) and not args.overwrite:
+            print("  %s already exists, left alone (use --overwrite to replace it)" % p)
             continue
         open(p, "wb").write(blob)
         h = hashlib.sha256(blob).hexdigest()

@@ -66,15 +66,6 @@ def run_capture(script, *a):
         return 130, "".join(lines)
 
 
-def running_bank():
-    """Which bank the device is running right now, or None if we cannot tell."""
-    rc, out = run_capture("usb/onev2_flash.py", "probe")
-    if rc != 0:
-        return None, out
-    m = re.search(r"^active image:\s*(\d)", out, re.M)
-    return (int(m.group(1)) if m else None), out
-
-
 class Closed(Exception):
     """stdin went away -- piped input ran out, or the window was closed."""
 
@@ -96,6 +87,42 @@ def pause():
         ask("\nPress Enter to go back to the menu. ")
     except Closed:
         pass
+
+
+def confirm(question, default):
+    """A yes/no question that understands "no" as well as "n".
+
+    The previous version compared against exactly "n" on a [Y/n] prompt, so typing "no" ran the
+    action -- the opposite of what was asked for. Anything unrecognised is asked again rather than
+    assumed.
+    """
+    suffix = "[Y/n] " if default else "[y/N] "
+    while True:
+        a = ask(question + " " + suffix, "")
+        if a in ("y", "yes"):
+            return True
+        if a in ("n", "no", "nope"):
+            return False
+        if a == "":
+            return default
+        print("  Please answer yes or no.")
+
+
+def running_bank():
+    """Which bank the device is RUNNING, and which it is set to run.
+
+    These are normally the same, but not always: `activate` changes the stored selection and the
+    new bank only takes effect after the reset. Reporting the stored value as "running" is how a
+    rollback ends up switching to the wrong place, so both are returned and the caller is expected
+    to notice when they disagree.
+    """
+    rc, out = run_capture("usb/onev2_flash.py", "probe")
+    if rc != 0:
+        return None, None, out
+    sel = re.search(r"^active image:\s*(\d)", out, re.M)
+    run = re.search(r"running from bank (\d)", out)
+    return ((int(run.group(1)) if run else None),
+            (int(sel.group(1)) if sel else None), out)
 
 
 # ------------------------------------------------------------------ the steps
@@ -141,9 +168,9 @@ Do this before anything else. These files are your way back.
         print("You already have them in firmware/ :")
         for n in STOCK:
             print("    %s   %s bytes" % (n, format(os.path.getsize(os.path.join(FW, n)), ",")))
-        if ask("\nRead them off the device again and overwrite? [y/N] ", "") != "y":
+        if not confirm("\nRead them off the device again and overwrite?", False):
             return pause()
-        rc = run("usb/backup-stock.py", "--force")
+        rc = run("usb/backup-stock.py", "--overwrite")
     else:
         rc = run("usb/backup-stock.py")
     if rc == 2:
@@ -154,10 +181,10 @@ If this is the unit you already patched, that is expected -- and a backup of
 what is on it now is still worth having. Choose this menu item again and say
 yes when it offers to go ahead anyway, or run:
 
-    %s usb/backup-stock.py --force
+    %s usb/backup-stock.py --overwrite --accept-non-factory
 """ % os.path.basename(PY))
-        if ask("Back up what is on it now anyway? [y/N] ", "") == "y":
-            run("usb/backup-stock.py", "--force")
+        if confirm("Back up what is on it now anyway?", False):
+            run("usb/backup-stock.py", "--overwrite", "--accept-non-factory")
     elif rc == 0:
         print("""
 Saved. Copy firmware/ somewhere off this computer as well -- a USB stick, a
@@ -248,7 +275,7 @@ guess. Read the output above for the line telling you what to run, or use
 Written to slot %s and verified against the file. The ONE is still running the
 OLD firmware -- the new one is sitting in the other slot, not in use yet.
 """ % target)
-    if ask("Switch over to the patched firmware now? [Y/n] ", "") == "n":
+    if not confirm("Switch over to the patched firmware now?", True):
         print("""
 Left alone, and nothing is lost: the patched firmware stays in slot %s until
 you switch to it. Choose this menu item again, or run:
@@ -275,7 +302,7 @@ Stay at the device -- it will ask you to press and hold the knob, and it
 decides pass or fail from what the device reports back. Walking away makes it
 fail for no good reason.
 """)
-    if ask("Ready, at the device? [y/N] ", "") != "y":
+    if not confirm("Ready, at the device?", False):
         return pause()
     run("usb/r9-test.py")
     pause()
@@ -286,18 +313,27 @@ def step_rollback():
 Both firmware slots keep whatever was last written to them, so this just tells
 the ONE to start using the other one. It is the undo button.
 """)
-    now, out = running_bank()
+    now, selected, out = running_bank()
     if now is None:
         print("""
-Could not read which slot it is running, so I will not guess. "Check my
-device" first.""")
+Could not read which slot the ONE is running, so I will not guess. Use
+"Check my device" first.""")
         return pause()
+    if selected is not None and selected != now:
+        print("""
+The ONE is RUNNING slot %d but is SET to run slot %d. That means an activate has
+happened without the restart taking effect yet.
+
+Unplug it, plug it back in, and choose this again -- switching slots from here
+while those two disagree is how you end up somewhere you did not intend.""" % (now, selected))
+        return pause()
+
     other = 1 - now
     print("""
-It is running slot %d. The other slot is %d, holding whatever was written
-there before -- for most people that is the firmware from before the patch.
+It is running slot %d. The other slot is %d, holding whatever was written there
+before -- for most people that is the firmware from before the patch.
 """ % (now, other))
-    if ask("Switch to slot %d? [y/N] " % other, "") != "y":
+    if not confirm("Switch to slot %d?" % other, False):
         print("Cancelled. Nothing changed.")
         return pause()
     run("usb/onev2_flash.py", "activate", other)

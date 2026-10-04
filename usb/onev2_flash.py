@@ -73,15 +73,57 @@ class One:
         self.timeout = timeout
         self.dev = None
         self._claimed = False
+        self.pin = None
         self._open(first=True)
 
-    def _open(self, first=False):
-        import libusb_package, usb.core, usb.util
-        self.usb, self.util = usb.core, usb.util
+    def _identify(self, dev):
+        """A key that survives the device re-enumerating. The USB address does NOT -- it is
+        reassigned on every re-enumeration, and reconnect() exists precisely because the device
+        re-enumerates under us -- so address is useless here. The serial number is stable and this
+        device does publish one; the physical port path is the fallback."""
+        try:
+            sn = dev.serial_number
+            if sn:
+                return ("serial", sn)
+        except Exception:
+            pass
+        try:
+            return ("port", dev.bus, tuple(dev.port_numbers or ()))
+        except Exception:
+            return None
+
+    def _candidates(self):
+        import libusb_package, usb.core
         backend = libusb_package.get_libusb1_backend()
-        dev = usb.core.find(idVendor=VID, idProduct=PID, backend=backend)
-        if dev is None:
+        return list(usb.core.find(find_all=True, idVendor=VID, idProduct=PID, backend=backend))
+
+    def _open(self, first=False):
+        import usb.core, usb.util
+        self.usb, self.util = usb.core, usb.util
+        found = self._candidates()
+        if not found:
             raise IOError("ONEv2 (%04x:%04x) not found by libusb. Is it plugged in?" % (VID, PID))
+
+        if first:
+            if len(found) > 1:
+                raise SystemExit(
+                    "\n%s\n%d Apogee ONEs are connected to this computer.\n\n"
+                    "Unplug all but the one you mean to work on, then run this again.\n\n"
+                    "This is refused rather than guessed at because the device re-enumerates "
+                    "during a\nflash and the handle has to be re-acquired mid-write. With two "
+                    "attached, the\nsecond half of an image could land in the other one -- and a "
+                    "bank holding half of\neach firmware can still pass its checksum.\n%s"
+                    % ("-" * 78, len(found), "-" * 78))
+            self.pin = self._identify(found[0])
+            dev = found[0]
+        else:
+            # Re-acquiring after a re-enumeration: take the device we started with, never
+            # whatever happens to be enumerated now.
+            match = [d for d in found if self.pin is None or self._identify(d) == self.pin]
+            if not match:
+                raise IOError("the ONE we were working on is not back yet")
+            dev = match[0]
+
         self.dev = dev
         self._claimed = False
         try:
@@ -91,6 +133,9 @@ class One:
             # Not fatal: device-recipient control transfers may still work.
             if first:
                 print("  (note: claim_interface(%d) failed: %s)" % (self.iface, e))
+        if first and self.pin:
+            print("  working on the ONE identified by %s=%s"
+                  % (self.pin[0], self.pin[1] if self.pin[0] == "serial" else self.pin[1:]))
 
     def reconnect(self, tries=60, delay=0.3):
         """Re-acquire the handle. While usbaudio2 is failing a control request it tears the device
@@ -184,6 +229,23 @@ class One:
 
 
 # ---------------------------------------------------------------- helpers
+STOCK_BCD = 0x0105
+BCD_AT = {0: 0x17600, 1: 0x37600}       # where each bank stores bcdDevice, so one page read tells
+                                        # us which firmware is in a bank without scanning it
+
+
+def _ver(v):
+    return "firmware %x.%02x" % (v >> 8, v & 0xFF)
+
+
+def bank_version(one, bank):
+    """The bcdDevice a bank reports, read from its one known offset."""
+    at = BCD_AT[bank]
+    page = one.read_flash(FLASH_BASE | (at & ~0x1FF), PAGE)
+    off = at & 0x1FF
+    return struct.unpack("<H", page[off:off + 2])[0]
+
+
 def pick_target(active, main_addr):
     """Reproduce the updater's bank choice, and report disagreement instead of guessing."""
     by_active = 1 if active == 0 else 0
@@ -372,6 +434,24 @@ def cmd_flash(args):
                              % (os.path.basename(name), len(src), start))
         if not args.yes:
             raise SystemExit("refusing to write without --yes")
+
+        # Do not spend the last bank that still holds factory firmware. Once both banks hold a
+        # patched build, "go back" only switches between two patched builds, and the device can no
+        # longer produce its own stock images -- the user is down to whatever files they kept.
+        if not args.overwrite_factory:
+            vt, vo = bank_version(one, target), bank_version(one, 1 - target)
+            if vt == STOCK_BCD and vo != STOCK_BCD:
+                raise SystemExit(
+                    "\n%s\nREFUSING: bank %d is the only one still holding factory firmware "
+                    "(%s),\nand bank %d holds %s.\n\n"
+                    "Overwriting it leaves the device with no factory firmware of its own. "
+                    "\"Go back\"\nwould then switch between two patched builds, and a fresh "
+                    "backup could no longer be\ntaken from this device at all -- you would be "
+                    "down to the files you have kept.\n\n"
+                    "If you want to go back to stock, activate bank %d instead of writing it:\n"
+                    "    python onev2_flash.py activate %d\n\n"
+                    "If you really do mean to overwrite it, pass --overwrite-factory.\n%s"
+                    % ("-" * 78, target, _ver(vt), 1 - target, _ver(vo), target, target, "-" * 78))
 
         t0 = time.time()
         written = 0
@@ -579,6 +659,8 @@ def main():
     p.add_argument("--activate", action="store_true",
                    help="also switch the active image and reset (otherwise do it separately, "
                         "so the write stays reversible)")
+    p.add_argument("--overwrite-factory", action="store_true",
+                   help="allow overwriting the last bank that still holds factory firmware")
     p.add_argument("--dry-run", action="store_true", help="walk the sequence without any OUT transfer")
     p.add_argument("--no-reset", dest="reset", action="store_false", default=True)
     p.set_defaults(func=cmd_flash)
