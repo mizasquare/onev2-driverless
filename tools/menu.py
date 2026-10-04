@@ -26,24 +26,35 @@ def have(names):
     return all(os.path.exists(os.path.join(FW, n)) for n in names)
 
 
+def _cmd(script, a, unbuffered=False):
+    cmd = [PY] + (["-u"] if unbuffered else []) + [os.path.join(ROOT, script)] \
+        + [str(x) for x in a]
+    print("\n> %s\n" % " ".join(('"%s"' % c if " " in c else c) for c in cmd))
+    return cmd
+
+
 def run(script, *a):
-    """Run one of the project's scripts and let its output through live."""
-    return _run(script, a)[0]
+    """Run one of the project's scripts, writing straight to this window.
+
+    Deliberately NOT captured. A captured child writes into a pipe, Python sees that it is not
+    a terminal and switches to block buffering, and a script that asks you to physically do
+    something then goes silent at exactly the moment it needs you. Only the steps whose output
+    has to be parsed are captured, and those pass -u.
+    """
+    try:
+        return subprocess.call(_cmd(script, a), cwd=ROOT)
+    except KeyboardInterrupt:
+        print("\n(stopped)")
+        return 130
 
 
 def run_capture(script, *a):
-    """Same, but also keep the output so we can read numbers out of it instead of asking the
-    user to retype them."""
-    return _run(script, a)
-
-
-def _run(script, a):
-    cmd = [PY, os.path.join(ROOT, script)] + [str(x) for x in a]
-    print("\n> %s\n" % " ".join(('"%s"' % c if " " in c else c) for c in cmd))
+    """Run it and keep the output, so numbers can be read out of it instead of being retyped by
+    the user. -u so it still appears live on screen."""
     lines = []
     try:
-        p = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, bufsize=1,
+        p = subprocess.Popen(_cmd(script, a, unbuffered=True), cwd=ROOT,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1,
                              universal_newlines=True, errors="replace")
         for line in p.stdout:
             sys.stdout.write(line)
@@ -57,7 +68,7 @@ def _run(script, a):
 
 def running_bank():
     """Which bank the device is running right now, or None if we cannot tell."""
-    rc, out = _run("usb/onev2_flash.py", ("probe",))
+    rc, out = run_capture("usb/onev2_flash.py", "probe")
     if rc != 0:
         return None, out
     m = re.search(r"^active image:\s*(\d)", out, re.M)

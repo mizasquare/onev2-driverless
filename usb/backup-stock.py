@@ -19,7 +19,9 @@ the ONE.
 import argparse, datetime, hashlib, os, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.stdout.reconfigure(encoding="utf-8")
+# line_buffering so prompts reach the user the moment they are printed, even when
+# something upstream is capturing this script's output into a pipe.
+sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 import onev2_flash as F
 
 BANKS = {0: (0x4000, 0x180B8), 1: (0x24000, 0x380B8)}

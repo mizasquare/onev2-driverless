@@ -50,6 +50,11 @@ SAFETY
 """
 import argparse, struct, sys, time, os
 
+try:  # progress lines should appear while they happen, not in one burst at the end
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 VID, PID = 0x0C60, 0x0017
 A9 = 0xA9
 A7 = 0xA7
