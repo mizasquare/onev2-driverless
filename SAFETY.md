@@ -51,15 +51,41 @@ computer as well.
 Round 9 makes a long press cycle the mic source, and the cycle reaches **External + 48 V**. A long
 press can therefore switch phantom power on.
 
-One step per hold, so Internal → +48 V takes two deliberate holds, never one. Even so: a ribbon
-microphone or an unbalanced source on the XLR can be damaged by phantom power. This is the only
-change in this project that can harm equipment *outside* the ONE.
+The cycle is **Internal → External → External + 48 V → Internal**, one step per hold. Read that
+again if you use an external microphone, because the dangerous reading is the one that sounds
+reassuring:
 
-If you would rather the cycle stopped at External and left 48 V to host software, that is a
-two-byte change in `patch/patch_r9.py`: compare against `0x2` instead of `0x3` in the wrap test.
+- from **Internal**, reaching 48 V takes two deliberate holds;
+- from **External** — where you already are if an external mic is plugged in — **a single long
+  press turns phantom power on.**
 
-`usb/r9-test.py` switches 48 V on during phase A2. Unplug anything on the XLR that should not see
-it before running the test.
+And on stock firmware a long press meant *mute*. So the gesture your hands already know is now the
+one that can energise the XLR.
+
+A ribbon microphone or an unbalanced source on the XLR can be damaged by phantom power. This is the
+only change in this project that can harm equipment *outside* the ONE.
+
+**How to avoid it.** The cycle only runs while the **mic indicator has focus**. Short-press to the
+instrument or speaker indicator first and a long press still just toggles mute, exactly as before.
+That is also the escape route if host software leaves the output muted.
+
+**Making the cycle stop at External** is a reasonable thing to want, and it is a small code change
+— but not the one-liner an earlier version of this file described, so here is the real position.
+The wrap test is `cp.w r12, 0x3` in `build_trampoline`, and comparing against `0x2` instead is one
+byte. Two things then bite:
+
+- the trampoline's bytes are pinned by a SHA-256 that was validated on hardware, so any edit stops
+  the build on purpose;
+- the naive edit only wraps on *equality*, so a device sitting at External + 48 V would advance to
+  source 3, which is out of range and whose behaviour nobody here has tested.
+
+Doing it properly means changing the comparison to wrap on "2 or more", re-pinning the hash, and
+re-running the acceptance test on hardware. If you want this, open an issue rather than patching
+around the hash guard — it exists precisely so unvalidated trampolines do not reach flash, and
+there is no USB rescue if one misbehaves.
+
+`usb/r9-test.py` switches 48 V on while it runs. Unplug anything on the XLR that should not see it
+before running the test.
 
 ## Smaller things worth knowing
 

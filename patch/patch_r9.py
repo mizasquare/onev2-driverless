@@ -382,10 +382,22 @@ def build_trampoline(data, delta):
     tramp = mic + mute
     assert len(tramp) <= STATE7_ROOM, "trampoline does not fit state 7's %d bytes" % STATE7_ROOM
     digest = hashlib.sha256(tramp).hexdigest()
-    assert digest == TRAMPOLINE_SHA256, (
-        "the assembled trampoline is %s, not the %s that was validated on hardware -- your "
-        "firmware differs from the one this patch was written for, so STOP"
-        % (digest[:16], TRAMPOLINE_SHA256[:16]))
+    if digest != TRAMPOLINE_SHA256:
+        stop("""The assembled trampoline hashes to %s, not the %s that was
+validated on hardware. Nothing has been written.
+
+Two things cause this, and they need opposite responses:
+
+  * You edited this file -- the wrap test, the fingerprints, the assembler.
+    Then this guard is doing its job: it pins the trampoline to bytes that were
+    actually run on a device, and your new bytes have not been. Re-pin the hash
+    only after testing them on hardware you can afford to lose, and see the
+    48 V section of SAFETY.md before changing the cycle.
+
+  * You did not edit anything. Then your firmware is not the build these
+    patches were written against, even though it passed the version check, and
+    you should stop and open an issue:
+    %s""" % (digest[:16], TRAMPOLINE_SHA256[:16], ISSUES))
     return tramp, targets, rejoin
 
 
@@ -621,6 +633,7 @@ made from. Please open an issue:
 
 
 # ------------------------------------------------- main
+results = []
 for name in ("ONEv2_USB_Audio_Image0.bin", "ONEv2_USB_Audio_Image1.bin"):
     path = os.path.join(FWDIR, name)
     if not os.path.exists(path):
@@ -671,12 +684,28 @@ device; failing that, extract them from Apogee's Maestro package.""" % name)
         struct.pack_into("<H", data, s + 12, 0x0112)
         print("    @%#07x bcdDevice 1.05 -> 1.12" % (s + 12))
 
-    dst = os.path.join(OUTDIR, name.replace(".bin", ".R9.patched.bin"))
-    open(dst, "wb").write(data)
     diffs = [k for k in range(len(src)) if src[k] != data[k]]
     regions = ([(c, c + SLOT) for c in cfgs] + [(s, s + 18) for s in devs]
                + [(TRAMP_AT + delta, TRAMP_AT + delta + nbytes - 4),
                   (HOOK_AT + delta, HOOK_AT + delta + 4)])
     stray = [d for d in diffs if not any(lo <= d < hi for lo, hi in regions)]
     print("    bytes changed %d, outside descriptor regions %d %s" % (len(diffs), len(stray), stray[:8]))
-    print("    wrote %s -> %s\n" % (dst, "ALL OK" if (allok and not stray) else "*** FAIL ***"))
+    ok = allok and not stray
+    print("    %s -> %s\n" % (name, "ALL OK" if ok else "*** FAIL ***"))
+    results.append((os.path.join(OUTDIR, name.replace(".bin", ".R9.patched.bin")),
+                    bytes(data), ok))
+
+# Nothing reaches firmware/ until BOTH images have passed every check. A half-written set is worse
+# than none: the flasher takes the two files as a pair, and a fresh one sitting beside a stale one
+# is how a mismatched set gets flashed.
+failed = [os.path.basename(d) for d, _, ok in results if not ok]
+if failed:
+    stop("""Checks failed for %s. NOTHING has been written -- not even the image that passed.
+
+Both banks are flashed from a matched pair, so a new file left beside a stale one is how a
+mismatched set reaches the device. Fix the cause, or open an issue:
+    %s""" % (", ".join(failed), ISSUES))
+
+for dst, blob, _ in results:
+    open(dst, "wb").write(blob)
+    print("wrote %s" % dst)

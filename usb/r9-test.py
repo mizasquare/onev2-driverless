@@ -117,18 +117,32 @@ for v in (1, 2, 0):
     wr(0x36, v); time.sleep(0.5)
     check("0x36 SET %d (%s) reads back" % (v, SRC[v]), rd(0x36)[0], v)
 
-print("\nWindows audio path unaffected")
+# The host API differs per platform, and so does whether an exclusive-mode open is even a thing.
+# Getting this wrong made every Mac fail Part 1 while the device was perfectly fine.
+HOSTAPI = {"win32": "Windows WASAPI", "darwin": "Core Audio"}.get(sys.platform)
+EXCLUSIVE = sys.platform == "win32"
+API_LABEL = HOSTAPI or "host"
+
+print("\nhost audio path unaffected (%s)" % API_LABEL)
 try:
     import numpy as np, sounddevice as sd
     sd._terminate(); sd._initialize()
-    ins = [i for i, x in enumerate(sd.query_devices())
-           if "ONEv2" in x["name"] and x["max_input_channels"] > 0
-           and sd.query_hostapis(x["hostapi"])["name"] == "Windows WASAPI"]
-    outs = [i for i, x in enumerate(sd.query_devices())
-            if "ONEv2" in x["name"] and x["max_output_channels"] > 0
-            and sd.query_hostapis(x["hostapi"])["name"] == "Windows WASAPI"]
-    check("WASAPI capture endpoints", len(ins), 1)
-    check("WASAPI output endpoints", len(outs), 1)
+
+    def endpoints(kind):
+        found = []
+        for i, x in enumerate(sd.query_devices()):
+            if "ONEv2" not in x["name"] or x["max_%s_channels" % kind] < 1:
+                continue
+            if HOSTAPI is None or sd.query_hostapis(x["hostapi"])["name"] == HOSTAPI:
+                found.append(i)
+        return found
+
+    ins, outs = endpoints("input"), endpoints("output")
+    check("%s capture endpoints" % API_LABEL, len(ins), 1)
+    check("%s output endpoints" % API_LABEL, len(outs), 1)
+    if not ins or not outs:
+        raise RuntimeError("the ONE is not presenting audio endpoints to %s" % API_LABEL)
+
     keep = rd(0x34)[0]
     wr(0x34, 35); time.sleep(0.4)
     with sd.InputStream(device=ins[0], samplerate=44100, channels=2, dtype="float32") as st:
@@ -140,17 +154,20 @@ try:
                                 "PASS" if -90 < rms < -20 else "FAIL, implausible level"))
     if not (-90 < rms < -20):
         fails.append("capture level")
-    # The ONE has ONE clock domain. While the capture stream above is still being torn down,
-    # Windows holds the device at 44100 and an exclusive open at any other rate comes back
-    # "Invalid sample rate" -- which looks exactly like the device not supporting the rate.
-    # Let it settle, and retry once before believing a refusal.
+
+    # The ONE has ONE clock domain. While the capture stream above is still being torn down, the
+    # host holds the device at 44100 and an open at any other rate comes back "Invalid sample
+    # rate" -- which looks exactly like the device not supporting the rate. Let it settle, and
+    # retry once before believing a refusal.
     time.sleep(1.5)
+    label = "exclusive output" if EXCLUSIVE else "output"
     for sr in (44100, 48000, 96000):
+        kw = {"extra_settings": sd.WasapiSettings(exclusive=True)} if EXCLUSIVE else {}
         err = None
         for attempt in range(2):
             try:
-                with sd.OutputStream(device=outs[0], samplerate=sr, channels=2, dtype="float32",
-                                     extra_settings=sd.WasapiSettings(exclusive=True)) as o:
+                with sd.OutputStream(device=outs[0], samplerate=sr, channels=2,
+                                     dtype="float32", **kw) as o:
                     o.write(np.zeros((int(sr * 0.2), 2), dtype="float32"))
                 err = None
                 break
@@ -158,9 +175,9 @@ try:
                 err = e
                 time.sleep(1.5)
         if err is None:
-            print("  %-52s %-18s PASS" % ("exclusive output %d Hz" % sr, "ran"))
+            print("  %-52s %-18s PASS" % ("%s %d Hz" % (label, sr), "ran"))
         else:
-            print("  %-52s %-18s FAIL %s" % ("exclusive output %d Hz" % sr, "-",
+            print("  %-52s %-18s FAIL %s" % ("%s %d Hz" % (label, sr), "-",
                                              str(err).splitlines()[0][:40]))
             fails.append("output %d" % sr)
         time.sleep(0.5)
@@ -171,7 +188,8 @@ except Exception as e:
 print("\n" + "=" * 78)
 if fails:
     print("PART 1 FAILED: %s" % ", ".join(fails))
-    print("Stopping before the physical test. Roll back with:  onev2_flash.py activate 0")
+    print("Stopping before the physical test. Roll back with:  "
+          "onev2_flash.py activate %d" % (1 - BANK))
     one.close()
     sys.exit(1)
 print("PART 1: all automated checks passed")
