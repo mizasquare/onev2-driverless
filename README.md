@@ -35,7 +35,7 @@ the patch — the class-compliant audio does not come at the cost of the vendor 
 
 You do not need to know any Python, or open a terminal. Two steps.
 
-### Windows
+### Windows (tested but still try on your risk)
 
 Windows needs to be told to let us reach the ONE's control channel, and **what you have to do
 depends on which firmware the device is still running.** Find out first — this is read-only:
@@ -82,7 +82,7 @@ signature. There is no Apogee-supplied Windows driver for this device that we ha
 
 Then **double-click `PATCH-ME-WINDOWS.bat`.**
 
-### macOS
+### macOS (untested. try on your risk)
 
 **Double-click `PATCH-ME-MAC.command`.** Nothing to install first; macOS lets us reach the control
 interface directly.
