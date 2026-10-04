@@ -44,8 +44,7 @@ alone. No firmware is included here — item 2 reads yours out of your own devic
   version (1.05); keep a spare if you have one.
 - **48 V phantom power:** after patching, a long press on the knob can switch phantom power on.
   Unplug anything on the XLR that should not see it (ribbon mics, unbalanced sources).
-- Patching voids any remaining warranty. The ONE shipped in 2013, so if you still have one
-  to void, you are a time traveller — and you should know the iPad has USB-C now.
+- Patching voids any remaining warranty, if you still have one. *Hello time traveller!*
 
 ## What to expect
 
