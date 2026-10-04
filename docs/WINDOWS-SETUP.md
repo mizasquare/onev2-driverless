@@ -22,6 +22,20 @@ corrects that declaration to interfaces 0–2, after which interface 3 becomes i
 | **Factory firmware** (never patched) | one node, audio driver, **problem 10**; no `MI_03` | bind WinUSB to the **composite parent** |
 | **Already patched** | `MI_00` working as a sound card, plus `MI_03` | bind WinUSB to **`MI_03` only** |
 
+**If this is your first time, you are in the first row** — even on a PC that has never seen a ONE,
+and even though the device does have an interface 3. Windows is not hiding it from you; it never
+made a node for it, because the descriptor told Windows that interface 3 is part of the audio
+function. There is no `iAP Interface` entry for Zadig to pick, and looking for one is the usual
+way to get stuck here. Bind the parent instead.
+
+> How well do we know this? It is measured on a device rolled back to factory firmware, it matches
+> what this project recorded the first time round — the `MI_03` node appeared only *after* the
+> first patch moved interface 3 out of the audio function — and it follows from how `usbccgp`
+> splits a composite device, which is driven by the descriptor and not by what drivers a machine
+> has seen before. It has not been checked on a PC that has never had this device attached. If you
+> are on one and you *do* see an `iAP Interface` node on factory firmware, please open an issue
+> saying so; bind that node and skip the parent step.
+
 ## Factory firmware — bind the parent
 
 Run [Zadig](https://zadig.akeo.ie/) as Administrator →
@@ -38,11 +52,20 @@ interface 3 reappears as its own node.
 
 ## Already patched — bind interface 3
 
+This is where you end up after patching once, and it is the state to stay in: the ONE works as a
+sound card *and* stays reachable for the next firmware round.
+
 Zadig as Administrator → **Options → List All Devices** → pick **`iAP Interface (Interface 3)`** →
 **WinUSB** → Install.
 
 > **Pick interface 3 and nothing else** in this case. Interface 0 is the sound card; binding
 > WinUSB to it takes the audio away until you undo it in Device Manager.
+
+You may not have to do anything at all. If you bound the parent to patch and then uninstalled it
+as described above, Windows remembers the interface-3 binding by instance ID and reapplies it when
+the patched firmware brings that node back. That is what happened here — after the uninstall and
+replug, `MI_00` came up on `usbaudio2` and `MI_03` on WinUSB with no further action. Run the state
+script before reaching for Zadig.
 
 ## About the signature
 
