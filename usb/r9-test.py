@@ -61,8 +61,15 @@ print("=" * 78)
 d = one.dev
 print("\nidentity")
 check("bcdDevice", "%#06x" % d.bcdDevice, "0x0112")
-check("active flash image", one.get_active_image(), 1)
-check("address of main (bank 1)", "%#010x" % one.get_address_of_main(), "0x80030c88")
+
+# Which bank the patch sits in is the user's choice -- read it rather than assume it. The byte
+# patterns below are the same either way, because every branch the patch writes is PC-relative;
+# only the flash addresses move by 0x20000.
+BANK = one.get_active_image()
+check("active flash image is 0 or 1", BANK in (0, 1), True)
+DELTA = 0x20000 * BANK
+check("address of main (running bank %d)" % BANK, "%#010x" % one.get_address_of_main(),
+      "%#010x" % (0x80010C88 + DELTA))
 check("config descriptor length", len(bytes(d.ctrl_transfer(0x80, 6, 0x0200, 0, 512))), 284)
 
 print("\nthe patch is in flash (read back over the 0xA9 read path)")
@@ -79,9 +86,10 @@ def rd_flash(addr, n):
     return out[:n]
 
 
-check("hook @flash 0x2cbc8", rd_flash(0x2CBC8, 4).hex(), "fe9ffd06")
-check("trampoline head @flash 0x2c5d4", rd_flash(0x2C5D4, 8).hex(), "5826c1105866c0f0")
-check("mute arm entry @flash 0x2c5f8", rd_flash(0x2C5F8, 4).hex(), "feb0ee08")
+HOOK, TRAMP, MUTE_ARM = 0xCBC8 + DELTA, 0xC5D4 + DELTA, 0xC5F8 + DELTA
+check("hook @flash %#07x" % HOOK, rd_flash(HOOK, 4).hex(), "fe9ffd06")
+check("trampoline head @flash %#07x" % TRAMP, rd_flash(TRAMP, 8).hex(), "5826c1105866c0f0")
+check("mute arm entry @flash %#07x" % MUTE_ARM, rd_flash(MUTE_ARM, 4).hex(), "feb0ee08")
 
 print("\nvendor channel still answers")
 for req, n, name in ((0x28, 3, "0x28 firmware version"), (0x29, 6, "0x29 event block"),
@@ -130,16 +138,30 @@ try:
                                 "PASS" if -90 < rms < -20 else "FAIL, implausible level"))
     if not (-90 < rms < -20):
         fails.append("capture level")
+    # The ONE has ONE clock domain. While the capture stream above is still being torn down,
+    # Windows holds the device at 44100 and an exclusive open at any other rate comes back
+    # "Invalid sample rate" -- which looks exactly like the device not supporting the rate.
+    # Let it settle, and retry once before believing a refusal.
+    time.sleep(1.5)
     for sr in (44100, 48000, 96000):
-        try:
-            with sd.OutputStream(device=outs[0], samplerate=sr, channels=2, dtype="float32",
-                                 extra_settings=sd.WasapiSettings(exclusive=True)) as o:
-                o.write(np.zeros((int(sr * 0.2), 2), dtype="float32"))
+        err = None
+        for attempt in range(2):
+            try:
+                with sd.OutputStream(device=outs[0], samplerate=sr, channels=2, dtype="float32",
+                                     extra_settings=sd.WasapiSettings(exclusive=True)) as o:
+                    o.write(np.zeros((int(sr * 0.2), 2), dtype="float32"))
+                err = None
+                break
+            except Exception as e:
+                err = e
+                time.sleep(1.5)
+        if err is None:
             print("  %-52s %-18s PASS" % ("exclusive output %d Hz" % sr, "ran"))
-        except Exception as e:
+        else:
             print("  %-52s %-18s FAIL %s" % ("exclusive output %d Hz" % sr, "-",
-                                             str(e).splitlines()[0][:40]))
+                                             str(err).splitlines()[0][:40]))
             fails.append("output %d" % sr)
+        time.sleep(0.5)
     wr(0x34, keep)
 except Exception as e:
     print("  audio checks skipped: %s" % str(e).splitlines()[0][:60])
