@@ -57,13 +57,8 @@ def main():
         print("device: bcdDevice %#06x, running bank %d, main at %#010x" % (bcd, active, main_at))
 
         if bcd != STOCK_BCD:
-            print("\n  !! This device is NOT on factory firmware (bcdDevice %#06x, factory is"
-                  " %#06x)." % (bcd, STOCK_BCD))
-            print("     A backup taken now captures what is on it NOW, not the factory image.")
-            if not args.force:
-                print("     Nothing written. Re-run with --force if that is what you want.")
-                return 2
-            print("     --force given, continuing.\n")
+            print("  note: the bank it is running is not factory firmware. Both banks are read"
+                  " and judged on their own below.")
 
         files = {}
         for bank, (start, end) in BANKS.items():
@@ -77,48 +72,82 @@ def main():
     finally:
         one.close()
 
+    # Each bank is judged on its own. The two banks are allowed to differ -- that is what A/B
+    # banks are FOR, and anyone who has already patched once has two different banks.
     print("\nchecking what came back")
-    ok = True
-
-    def check(name, good):
-        nonlocal ok
-        ok &= bool(good)
-        print("  %-56s %s" % (name, "ok" if good else "FAILED"))
-
+    verdict = {}
     for bank, blob in files.items():
-        check("bank %d is %d bytes" % (bank, SIZES[bank]), len(blob) == SIZES[bank])
-        check("bank %d holds two config descriptors" % bank, blob.count(CFG_SIG) == 2)
+        checks, ok = [], True
+
+        def check(name, good):
+            nonlocal ok
+            ok &= bool(good)
+            checks.append("    %-52s %s" % (name, "ok" if good else "FAILED"))
+
+        check("%d bytes" % SIZES[bank], len(blob) == SIZES[bank])
+        check("two config descriptors, 340 bytes each", blob.count(CFG_SIG) == 2)
         # the device descriptor carries bcdDevice right after idVendor/idProduct
         j = blob.find(bytes.fromhex("600c1700"))
-        check("bank %d device descriptor found" % bank, j > 0)
-        if j > 0:
-            check("bank %d bcdDevice is %#06x" % (bank, bcd),
-                  struct.unpack("<H", blob[j + 4:j + 6])[0] == bcd)
+        check("device descriptor present", j > 0)
+        ver = struct.unpack("<H", blob[j + 4:j + 6])[0] if j > 0 else None
+        check("bcdDevice is %#06x, the factory version" % STOCK_BCD, ver == STOCK_BCD)
+        verdict[bank] = (ok, ver)
+        print("  bank %d: %s" % (bank, "FACTORY FIRMWARE" if ok else
+                                 ("bcdDevice %#06x, not factory" % ver if ver else "unreadable")))
+        print("\n".join(checks))
 
-    b0 = files[0][BANKS[0][0]:BANKS[0][1]]
-    b1 = files[1][BANKS[1][0]:BANKS[1][1]]
-    check("both banks hold the same length of code", len(b0) == len(b1))
-    diff = [i for i in range(min(len(b0), len(b1))) if b0[i] != b1[i]]
-    words = sorted({i & ~3 for i in diff})
-    bad = 0
-    for w in words:
-        a = struct.unpack(">I", b0[w:w + 4])[0]
-        b = struct.unpack(">I", b1[w:w + 4])[0]
-        if b - a != 0x20000 or not (0x80004000 <= a <= 0x800180B8):
-            bad += 1
-    check("the two banks differ only by +0x20000 relocation (%d words, %d odd)"
-          % (len(words), bad), words and bad == 0)
+    good = [b for b in sorted(files) if verdict[b][0]]
 
-    if not ok:
-        print("\nSomething above failed, so these files are NOT trustworthy. Nothing written.")
-        print("Re-seat the USB cable and try again; if it keeps failing, say so before flashing")
-        print("anything.")
-        return 1
+    # Only meaningful when both banks claim to be the same firmware: the bodies must then be
+    # identical apart from the +0x20000 relocation of every absolute code pointer.
+    if len(good) == 2:
+        b0 = files[0][BANKS[0][0]:BANKS[0][1]]
+        b1 = files[1][BANKS[1][0]:BANKS[1][1]]
+        words = sorted({i & ~3 for i in range(min(len(b0), len(b1))) if b0[i] != b1[i]})
+        bad = sum(1 for w in words
+                  if struct.unpack(">I", b1[w:w + 4])[0] - struct.unpack(">I", b0[w:w + 4])[0]
+                  != 0x20000
+                  or not 0x80004000 <= struct.unpack(">I", b0[w:w + 4])[0] <= 0x800180B8)
+        okr = bool(words) and bad == 0
+        print("\n  both banks: differ only by the +0x20000 relocation"
+              " (%d words, %d odd)   %s" % (len(words), bad, "ok" if okr else "FAILED"))
+        if not okr:
+            print("""
+  Both banks say they are factory firmware but they are not the same image.
+  That should not happen. Nothing written -- re-seat the cable and try again,
+  and say so before flashing anything if it repeats.""")
+            return 1
+
+    if not good:
+        print("""
+Neither bank holds factory firmware, so there is nothing here to save as the
+originals. If you patched this device, the backup you took beforehand is still
+your originals -- this cannot recreate them.""")
+        if not args.force:
+            print("Nothing written. --force writes what is actually on the banks anyway.")
+            return 2
+        good = sorted(files)
+        print("--force given: writing what is on the banks regardless.\n")
+    elif len(good) == 1:
+        other = 1 - good[0]
+        print("""
+Only bank %d holds factory firmware; bank %d holds something else, so only one
+of the two files can be saved from this device.
+
+The patcher needs both. The way out is to put the factory image back into bank
+%d as well and run this again -- but that needs the file this cannot give you.
+If you have no backup at all, get the images from Apogee's Maestro package once;
+after that this tool covers you.""" % (good[0], other, other))
+        if not args.force:
+            print("\nWriting only bank %d's file. --force would write both." % good[0])
+        else:
+            good = sorted(files)
 
     print("\nwriting")
     info = ["Backup taken %s" % datetime.datetime.now().isoformat(timespec="seconds"),
             "bcdDevice %#06x, running bank %d, main at %#010x" % (bcd, active, main_at), ""]
-    for bank, blob in files.items():
+    for bank in good:
+        blob = files[bank]
         p = os.path.join(out, "ONEv2_USB_Audio_Image%d.bin" % bank)
         if os.path.exists(p) and not args.force:
             print("  %s already exists, left alone (use --force to overwrite)" % p)
@@ -130,9 +159,11 @@ def main():
         info.append("ONEv2_USB_Audio_Image%d.bin  %d bytes  sha256 %s" % (bank, len(blob), h))
     open(os.path.join(out, "BACKUP-INFO.txt"), "w", encoding="utf-8").write("\n".join(info) + "\n")
 
-    print("\nKeep these two files. They are your way back to exactly this firmware, and the")
-    print("patcher builds every patched image from them.")
-    return 0
+    print("\nKeep %s. %s your way back to exactly this firmware, and the patcher"
+          % ("these two files" if len(good) == 2 else "this file",
+             "They are" if len(good) == 2 else "It is part of"))
+    print("builds every patched image from %s." % ("them" if len(good) == 2 else "it"))
+    return 0 if len(good) == 2 else 3
 
 
 if __name__ == "__main__":
