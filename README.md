@@ -20,6 +20,10 @@ description of itself, plus 82 bytes of code.
 On the iPad, Apogee's own Maestro app still drives the mixer and device controls over USB-C after
 the patch — the class-compliant audio does not come at the cost of the vendor app.
 
+That table is about the **patched firmware**, and every row of it is verified on real hardware.
+Doing the patching has so far only been done from Windows; see the notes under each platform
+below.
+
 > Apogee® and Apogee ONE® are trademarks of Apogee Electronics Corporation. This project is not
 > affiliated with, authorised by, endorsed by or sponsored by Apogee Electronics Corporation.
 > Those names appear here only to identify the hardware these patches are for. No Apogee firmware,
@@ -36,6 +40,9 @@ the patch — the class-compliant audio does not come at the cost of the vendor 
 You do not need to know any Python, or open a terminal. Two steps.
 
 ### Windows
+
+> Run end to end on Windows 11 — launcher, backup, build, flash, roll back and the full test. It
+> is still your hardware and your risk.
 
 Windows needs to be told to let us reach the ONE's control channel, and **what you have to do
 depends on which firmware the device is still running.** Find out first — this is read-only:
@@ -83,6 +90,13 @@ signature. There is no Apogee-supplied Windows driver for this device that we ha
 Then **double-click `PATCH-ME-WINDOWS.bat`.**
 
 ### macOS
+
+> **Patching *from* a Mac has not been done yet.** The patched firmware itself is verified on
+> macOS — record, play and switching the input from the knob all work — but this launcher, the
+> Python bootstrap behind it and flashing from macOS have not been exercised. The flashing code is
+> the same code the Windows path runs, and macOS needs no driver binding at all, so there is less
+> to go wrong here than on Windows. You would still be the first. At your own risk, and please
+> open an issue either way.
 
 **Double-click `PATCH-ME-MAC.command`.** Nothing to install first; macOS lets us reach the control
 interface directly.
