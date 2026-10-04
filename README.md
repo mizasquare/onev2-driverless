@@ -17,6 +17,9 @@ description of itself, plus 82 bytes of code.
 | macOS (M1 MacBook on Tahoe)                  | verified | verified | verified                      |
 | iPad USB-C (iPad Pro M2 on iPadOS 27.2 beta) | verified | verified | verified                      |
 
+On the iPad, Apogee's own Maestro app still drives the mixer and device controls over USB-C after
+the patch — the class-compliant audio does not come at the cost of the vendor app.
+
 > Apogee® and Apogee ONE® are trademarks of Apogee Electronics Corporation. This project is not
 > affiliated with, authorised by, endorsed by or sponsored by Apogee Electronics Corporation.
 > Those names appear here only to identify the hardware these patches are for. No Apogee firmware,
@@ -89,8 +92,11 @@ file → **Open** → **Open**. That happens to anything downloaded rather than 
 
 ### iPad
 
-Not possible from the iPad itself — iOS gives apps no way to reach the control interface. Patch
-from a PC or a Mac; the result then works on the iPad.
+Not possible from the iPad itself — iOS gives third-party code no way to open the control
+interface directly. Patch from a PC or a Mac; the result then works on the iPad.
+
+Apogee's own iPad Maestro app is a different matter, and it keeps working. See
+[below](#apogees-own-software-still-works).
 
 ### What the launcher does
 
@@ -213,6 +219,22 @@ Windows 11 reports the audio function with **problem code 10, "this device canno
 inbox `usbaudio2.sys` rejects the stock descriptor outright. That is measured on hardware, not
 inferred, and it is the plainest statement of why this project exists.
 
+### Apogee's own software still works
+
+Changing the IAD moved interface 3 out of the audio function, which is the correction that makes
+Windows expose it separately — and which could plausibly have hidden it from Apogee's own software
+instead. It did not.
+
+Observed on an M2 iPad Pro: **Apogee's iPad Maestro app, written for the Lightning era, still
+drives the mixer and the device controls over USB-C after the patch.** Apple's MFi/iAP path to
+interface 3 is untouched, so the vendor app keeps working alongside the class-compliant audio —
+you are not trading one for the other.
+
+What *is* out of reach on iOS is opening interface 3 yourself: third-party code gets no direct
+access to it, which is why the knob had to learn to switch the mic source in firmware rather than
+being driven from a host app. The MFi route Apogee uses needs their entitlement, not just the
+descriptor.
+
 ### The code — 82 bytes
 
 Two writes:
@@ -327,7 +349,9 @@ The control protocol was recovered from Apogee's own symbol names in their macOS
 
 `bmRequestType` is `0x40` out / `0xC0` in, recipient **device**, so `wIndex` is 0 for all of
 these. On Windows this needs WinUSB bound to `MI_03`; on macOS libusb reaches it directly; on iOS
-it is not reachable at all, which is why the code patch exists.
+third-party code cannot open the interface at all, which is why the code patch exists. Apple's
+MFi/iAP path to the same interface does still work there — Apogee's own iPad app uses it and keeps
+working after the patch — but that route is not open to anyone without their entitlement.
 
 Apogee left a lot of the device's state readable and writable this way, which is presumably how
 they debugged it, and it is why the whole front-panel model here could be established from outside
