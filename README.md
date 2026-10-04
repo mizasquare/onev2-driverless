@@ -35,6 +35,51 @@ below.
 
 ---
 
+## How this was built, and what that means for you
+
+**This project was vibecoded.** Essentially all of the code here — the patcher, the flasher, the
+tests, the launchers — and most of the reverse engineering was produced by **Claude** (Anthropic's
+Claude Opus 5, driving Claude Code). The human author owns the hardware, set the goals, made the
+calls, ran every physical test and accepts the consequences — but does not claim the expertise to
+audit every line of AVR32 reasoning independently, or to have enumerated every way this could go
+wrong. Nobody with firmware-engineering credentials has reviewed it.
+
+That is not a reason to dismiss this, and not a reason to trust it either. It is a reason to know
+which parts rest on measurement and which rest on argument.
+
+**Measured on real hardware, and reproducible by you**
+
+- Every descriptor change in the table further down, read field by field out of the images.
+- Factory firmware genuinely fails on Windows 11's inbox driver — problem code 10, "this device
+  cannot start". The patched firmware does not.
+- Reading the firmware back off a device reproduces Apogee's own image files byte for byte, and
+  rebuilding the patched images from those reproduces what was flashed, byte for byte.
+- 26 automated checks and 5 physical long-press phases pass on the patched device.
+- Record and play work on Windows 11, macOS and an M2 iPad over USB-C with no vendor software.
+
+**Argued, not proven**
+
+- That the 136 bytes of firmware the code patch overwrites really are unreachable. Four independent
+  arguments say so, deliberately chosen so none of them depends on a disassembler staying in sync
+  with the instruction stream — but that is reasoning about a binary, not a proof, and no second
+  expert has checked it. The bounded worst case if it is wrong is also an argument.
+- What that dead code was *for*. Its behaviour is read off the instructions; its purpose is a
+  guess, and is labelled as one.
+- Anything in `docs/` marked a hypothesis. It is marked for a reason.
+
+**Simply unknown**
+
+- Long-term behaviour. This firmware has run for days, not months. Nothing is known about flash
+  wear, battery behaviour or thermal effects over time.
+- Variation between units: two devices, one model, one factory firmware version (1.05).
+- Whether patching from a Mac works at all — see the macOS note below.
+
+Two failure modes are worth holding in your head before you start: there is **no USB rescue** if an
+image both passes its checksum and fails to boot, and after patching a long press can switch **48 V
+phantom power** on. Both are covered in [SAFETY.md](SAFETY.md), which is short.
+
+---
+
 ## Patch it
 
 You do not need to know any Python, or open a terminal. Two steps.
@@ -330,9 +375,16 @@ address decode ignores bit 18 — and how the tools here refuse to make it.
 
 ---
 
-## Licence
+## Authors and licence
 
-MIT, see [LICENSE](LICENSE).
+- **Sukwoon Song** — owns the hardware, set the goals, made the decisions, ran every physical
+  test, and bears the consequences of publishing this.
+- **Claude** (Anthropic's Claude Opus 5, via Claude Code) — the reverse engineering and
+  essentially all of the code. Co-author on every commit in this repository.
+
+Copyright for licensing purposes rests with the human author; MIT, see [LICENSE](LICENSE). Please
+read [how this was built](#how-this-was-built-and-what-that-means-for-you) before relying on any
+of it.
 
 ---
 ---
