@@ -1,74 +1,107 @@
 # Apogee ONE (2nd gen) — driverless firmware patches
 
-Nine firmware patch rounds that make a 2013 **Apogee ONE for iPad & Mac** (USB `0c60:0017`,
-product string `ONEv2`) work with **no vendor driver and no host application** on Windows 11,
-macOS and iPad (USB-C), and then let the knob on the device switch its own microphone input.
+This patches the firmware of the 2013 **Apogee ONE for iPad & Mac** (USB `0c60:0017`, product
+string `ONEv2`) so that it
 
-Vendor support for this box is winding down. These patches touch only the firmware's USB
-descriptor plus 82 bytes of code, so the device stops needing Apogee's software to be useful.
+- records and plays on **Windows 11, macOS and iPad (USB-C)** with the drivers those systems
+  already ship — no Apogee driver, no Apogee app;
+- lets the **knob on the device** switch its own microphone input between Internal, External and
+  External + 48 V, which previously only Apogee's software could do.
 
-| Platform | Record | Play | Input switching on the device |
-|---|---|---|---|
-| Windows 11, inbox `usbaudio2.sys` | verified | verified | verified |
-| macOS | verified through round 8 | verified through round 8 | not yet retested on round 9 |
-| iPad USB-C | verified through round 8 | verified through round 8 | not yet retested on round 9 |
+Vendor support for the ONE is winding down. The patch is deliberately small: the firmware's USB
+description of itself, plus 82 bytes of code.
 
-Round 9 changes no descriptor byte, so audio on macOS and iPad should be exactly as round 8 left
-it, but the knob behaviour has only been exercised on Windows so far. Said plainly rather than
-implied.
+| Platform                                     | Record   | Play     | Input switching on the device |
+| -------------------------------------------- | -------- | -------- | ----------------------------- |
+| Windows 11, inbox `usbaudio2.sys`            | verified | verified | verified                      |
+| macOS (M1 MacBook on Tahoe)                  | verified | verified | verified                      |
+| iPad USB-C (iPad Pro M2 on iPadOS 27.2 beta) | verified | verified | verified                      |
 
-Measured, not assumed: capture levels, a 43.5 dB monotonic preamp sweep, 44.1/48/88.2/96 kHz in
-WASAPI exclusive mode, 16 minutes of idle with no re-enumeration, and an ETW capture of every USB
-class control request the host sends.
+> Apogee® and Apogee ONE® are trademarks of Apogee Electronics Corporation. This project is not
+> affiliated with, authorised by, endorsed by or sponsored by Apogee Electronics Corporation.
+> Those names appear here only to identify the hardware these patches are for. No Apogee firmware,
+> software or documentation is redistributed in this repository.
+>
+> This is independent reverse engineering for interoperability, done on hardware the author owns.
+> Patching your own device will void any remaining warranty. Everything here comes with no warranty
+> of any kind — see [LICENSE](LICENSE).
 
-## What each round fixed
+---
 
-Rounds 1–8 are descriptor-only. **Three of the defects were Apogee's own**, invisible until a
-standards-compliant host finally parsed the descriptor:
+## Patch it
 
-| Round | Change | Result |
-|---|---|---|
-| 1 | IAD `bInterfaceCount` 4→3, AC `wTotalLength`, duplicate `CLOCK_SOURCE` id | Event 34 persists; IF3 splits into its own node, which later becomes the WinUSB attach point |
-| 2 | remove the duplicate `CLOCK_SOURCE` | Event 34 persists |
-| 3 | clock `bmAttributes`, iso endpoint sync types, capture `bmChannelConfig` → 0 | Event 34 persists — this round changed nothing, and round 7 undid part of it |
-| 4 | **`FEATURE_UNIT bLength` 10→18** (ADC-2 §4.7.2.8: `6 + (nch+1)×4`) | **Event 34 stops.** The only outright spec violation in the descriptor |
-| 5 | mic `FEATURE_UNIT bmaControls` → 0 | it advertised a volume control the firmware never implemented |
-| 6 | `SELECTOR_UNIT iSelector` 21→0 | string 21 does not exist on this device; every index but 1–3 and 17–20 STALLs. `problem=0` follows |
-| 7 | capture `bmChannelConfig` 0x00 → 0x03 | gives the capture cluster the same stereo layout playback always had |
-| 8 | **remove `SELECTOR_UNIT 15` from the capture path** | **iPad records.** iPadOS could not build a capture path through a Selector Unit |
-| 9 | **82-byte code patch** | a long press in mic focus cycles Internal → External → External+48V |
+You do not need to know any Python, or open a terminal. Two steps.
 
-Round 8 is the one with a cost: removing the selector removes host-side input switching on
-Windows and macOS. Round 9 gives it back on the device itself, which is the only place that works
-on all three platforms.
+### Windows
 
-## What you need before you start
+1. **One-time:** tell Windows to let us talk to the ONE's control interface. Run
+   [Zadig](https://zadig.akeo.ie/) as Administrator, tick **Options → List All Devices**, pick the
+   line that reads **`iAP Interface (Interface 3)`**, set the driver to **WinUSB**, press
+   **Install**.
 
-### A way to reach interface 3
+   > **Pick interface 3 and nothing else.** Interface 0 is the sound card. If you bind WinUSB to
+   > that one by mistake, the ONE stops working as an audio device until you undo it in Device
+   > Manager.
 
-Flashing and every vendor control request go to **interface 3**, not to the audio interfaces. That
-interface needs Microsoft's inbox `WinUSB.sys` bound to it, and nothing else about the device
-changes: `usbaudio2` keeps the audio function on `MI_00`, so audio and the vendor channel work at
-the same time.
+2. **Double-click `PATCH-ME-WINDOWS.bat`.**
 
-| Platform | What to do |
-|---|---|
-| **Windows** | Bind WinUSB to `USB\VID_0C60&PID_0017&MI_03`. Easiest is [Zadig](https://zadig.akeo.ie/): **Options → List All Devices**, pick the entry for the ONE's **interface 3** (it shows as `iAP Interface (Interface 3)`, because that is the device's own interface string), choose **WinUSB**, Install. Or install `usb/onev2_winusb.inf` by hand, which binds the same driver to the same interface. |
-| **macOS** | Nothing. libusb opens interface 3 directly. |
-| **iPad** | Not reachable from iOS. Patch from a PC or a Mac. |
+### macOS
 
-**Pick interface 3 and only interface 3.** Binding WinUSB to interface 0 would take the audio
-function away from `usbaudio2` and the device would stop being a sound card.
+**Double-click `PATCH-ME-MAC.command`.** Nothing to install first; macOS lets us reach the control
+interface directly.
 
-Note on what "signed" means here: Zadig/libwdi generates a **self-signed** catalog
-(`CN=USB\VID_0C60&PID_0017&MI_03 (libwdi autogenerated)`) and installs its own certificate, so
-Windows accepts it without test-signing mode. It is not a vendor or WHQL signature. There is no
-Apogee-provided driver for this interface that we know of; every patch round in this project ran
-through Zadig's binding.
+If Finder says it "cannot be opened because it is from an unidentified developer", right-click the
+file → **Open** → **Open**. That happens to anything downloaded rather than cloned, once.
 
-### Your own firmware images
+### iPad
 
-**No firmware images are in this repository.** They are Apogee's. Get your own:
+Not possible from the iPad itself — iOS gives apps no way to reach the control interface. Patch
+from a PC or a Mac; the result then works on the iPad.
+
+### What the launcher does
+
+It finds Python, offers to install it if it is missing, puts the two USB packages it needs into a
+`.venv` folder inside the project (your system Python is left alone), and opens a menu:
+
+```
+   1)  Check my device                    (reads only)
+   2)  Back up my firmware                (reads only -- do this first)
+   3)  Build the patched images           (does not touch the device)
+   4)  Flash it and switch over           (WRITES the device)
+   5)  Test it                            (reads only, asks you to press the knob)
+   6)  Go back to the other firmware slot (the undo button)
+   ?)  What do I do? Read this first
+```
+
+Work down the list. **Do not skip 2** — that is what saves the firmware currently on your ONE, and
+it is your way back. Only item 4 writes anything to the device.
+
+Item 5 runs 26 checks by itself and then asks you for five long presses, deciding pass or fail for
+each from what the device reports. Stay at the device while it runs.
+
+**Read [SAFETY.md](SAFETY.md) before item 4.** It is short. Two things in it matter more than the
+rest: the patch is reversible because the device has two firmware slots and only the unused one is
+ever written, and after patching **a long press can switch 48 V phantom power on** — unplug
+anything on the XLR that should not see it.
+
+---
+
+## Where your firmware comes from
+
+**No firmware images are in this repository.** They are Apogee's. You get your own, from your own
+device:
+
+**Menu item 2 reads the firmware out of your ONE** and writes the two files everything else is
+built from. The device can read its own flash over the same channel used for writing, and a stock
+image file turns out to be nothing but a 4-byte reset vector, zero padding, and the bank's
+contents — so the files can be rebuilt exactly as Apogee shipped them. Checked against Apogee's
+own `ONEv2_USB_Audio_Image0.bin` and `Image1.bin`: both come back byte-identical.
+
+The backup refuses to run if your device is not on factory firmware, so a device you already
+patched cannot quietly be mistaken for a clean source.
+
+<details>
+<summary>The other way: extract them from Maestro</summary>
 
 1. Download Apogee's **Maestro 2.5C** package for the ONE (`One iPad & Mac 2.5C.dmg`) from
    Apogee's support pages.
@@ -76,75 +109,224 @@ through Zadig's binding.
    `One Firmware Updater.app` bundle inside it.
 3. Put both in `firmware/`.
 
-Expected, so you can tell you have the right files:
+Either way, this is what correct files look like:
 
 ```
 ONEv2_USB_Audio_Image0.bin   98,488 bytes    linked for flash bank 0 at 0x80004000
 ONEv2_USB_Audio_Image1.bin  229,560 bytes    the same body relocated +0x20000
-both: bcdDevice 1.05, and a 340-byte config descriptor twice over at file 0x17614 / 0x17768
+both: bcdDevice 1.05, and a 340-byte config descriptor twice over
 ```
 
-`patch_r9.py` checks several fingerprints before it writes anything, and refuses outright if your
-image is not the one these patches were written and tested against.
+</details>
 
-## Use it
+Keep those two files somewhere off the computer as well. The patcher checks them against known
+fingerprints and refuses outright if they are not the firmware these patches were written and
+tested against.
 
-Read [SAFETY.md](SAFETY.md) first. It is short and it matters.
+---
 
-```bash
-# 1. build the patched images from your own firmware
-python patch/patch_r9.py
+## What the patch changes
 
-# 2. Windows only: bind WinUSB to interface 3 (see "What you need" above).
-#    Zadig, or usb/onev2_winusb.inf. macOS needs nothing.
+### The USB descriptor
 
-# 3. write the INACTIVE bank, then switch to it
-python usb/onev2_flash.py flash firmware/ONEv2_USB_Audio_Image0.R9.patched.bin \
-                                firmware/ONEv2_USB_Audio_Image1.R9.patched.bin
-python usb/onev2_flash.py activate 1      # or 0, whichever it just wrote
+The ONE exposes **four** USB interfaces: `0` AudioControl, `1` AudioStreaming out (playback),
+`2` AudioStreaming in (capture), `3` Apogee's own iAP/vendor interface. The descriptor describing
+all of that shrinks from **340 to 284 bytes**; the slot in flash is 340 bytes hard, so it had to.
 
-# 4. check it
-python usb/r9-test.py
+Stock → patched, every change:
+
+| Where | Field | Stock | Patched | Why |
+| --- | --- | --- | --- | --- |
+| Config | `wTotalLength` | 340 | 284 | follows from the rest |
+| IAD | `bInterfaceCount` | 4 | **3** | the audio function is interfaces 0–2. Stock swallowed the vendor interface into it. |
+| AC header | `wTotalLength` | 174 | **111** | stock was wrong by 7 — it counted the interrupt endpoint descriptor, which the spec excludes. 167 were actually there. |
+| Clock source 1 | `bmAttributes` | `0x01` internal **fixed** | `0x03` internal **programmable** | the device runs several sample rates; a fixed clock contradicts the rate control it advertises |
+| Clock source 1 | — | **declared twice**, both with ID 1 | the duplicate is gone | unit IDs must be unique |
+| Feature unit 4 (playback) | `bLength` | 10 | **18** | ADC-2 §4.7.2.8 says `6 + (channels+1)×4`. 10 describes a 0-channel unit on a stereo path. |
+| Feature unit 4 | `bmaControls` | `0f000000` (master only) | master + L + R, each `0f000000` | mute and volume, per channel, as the hardware actually has |
+| Feature unit 10 (mic) | `bLength` | 10 | **18** | same defect |
+| Feature unit 10 | `bmaControls` | `04000000` — volume, host-readable | all **zero** | the firmware does not implement a mic volume control. Claiming one made hosts ask and get nothing. |
+| Input terminal 9 (mic) | `bmChannelConfig` | `0x00000000` | `0x00000003` | FRONT_LEFT \| FRONT_RIGHT |
+| Capture `AS_GENERAL` | `bmChannelConfig` | `0x00000004` FRONT_CENTER | `0x00000003` | one spatial bit for a two-channel stream is malformed. **This is what iPadOS refused.** |
+| Output terminal 8 | `bSourceID` | 15 (the selector) | **10** (the mic feature unit) | the capture path no longer runs through a selector unit |
+| Selector unit 15 | — | 3 pins, `iSelector` = string **21** | **removed** | iPadOS cannot build a capture path through a selector unit at all. String 21 does not exist on this device either. |
+| Input terminals 11, 13 | — | duplicate mic terminals | **removed** | the three mic sources are one terminal; switching between them is the device's business, not the host's |
+| Feature units 12, 14 | — | their feature units | **removed** | same |
+| Endpoint `0x01` (playback) | `bmAttributes` | `0x0d` Synchronous | `0x09` **Adaptive** | the device does not lock to USB SOF |
+| Endpoint `0x82` (capture) | `bmAttributes` | `0x0d` Synchronous | `0x05` **Asynchronous** | it runs on its own clock |
+| Device | `bcdDevice` | 1.05 | 1.12 | so you can tell which firmware is running |
+
+The two stored copies of the descriptor are identical except that the patched second copy carries
+`bMaxPower` 6 instead of 5 — a deliberate marker, so you can tell from the host side which copy
+the device actually served.
+
+The single change that mattered most was removing the selector unit: **iPadOS will not build a
+UAC2 capture path through one.** Everything else is compliance tidying that Windows and macOS
+tolerated and the iPad did not.
+
+### The code — 82 bytes
+
+Two writes:
+
+```
+hook         4 bytes at 0x8000CBC8   `rcall 0x8000A208`  ->  `bral 0x8000C5D4`
+trampoline  78 bytes at 0x8000C5D4   inside state 7's handler, which is dead code
 ```
 
-`r9-test.py` judges 26 checks by itself, then walks you through five physical long presses and
-decides pass or fail for each.
+Stock behaviour: a long press (held 105 main-loop passes) toggles output mute, in any focus state.
+Apogee's own knowledge base documents it — hold the knob to mute and unmute the output.
 
-Requires Python 3.11+, `pyusb` with a libusb backend, and `sounddevice`/`numpy` for the audio
-checks.
+After the patch, the long press checks which indicator currently has focus:
 
-## How the device is driven
+- **microphone focus** (Internal / External / External + 48 V) — advance the mic source one step,
+  wrapping round;
+- **instrument or output focus** — toggle mute, running Apogee's own code byte for byte.
 
-Flashing is **not DFU**. Vendor request `0xA9` against the running application, sub-command in
+So mute stays reachable from the panel: short-press to the instrument or speaker indicator, then
+hold. That also keeps an escape route if host software leaves the output muted.
+
+The trampoline is not a blob pasted in from somewhere. The patcher **lifts Apogee's own mute code
+out of your image**, retargets its three `rcall`s for your bank, appends a jump back, and checks
+the result against a SHA-256 of the exact bytes that were validated on hardware. If your image
+differs, the hash fails and nothing is written.
+
+#### Why it is safe to overwrite state 7
+
+The front panel is a state machine with a vtable of nine handlers at `0x8000C370`. Entry 7's
+handler is 136 bytes long and **nothing can reach it**:
+
+- the only 32-bit word in the whole 98,488-byte image pointing into that handler is the vtable
+  entry itself, which the patch leaves alone;
+- no 4-byte branch or call anywhere in the image resolves into the region — an algebraic scan of
+  every even address finds zero hits — and no compact 2-byte branch in the neighbouring handlers
+  does either;
+- the constant 7 is never materialised inside the UI module, so nothing can store 7 into the focus
+  variable: `mov Rd,0x7` appears 40 times in the image and 0 times in `0x8000C3B0..0x8000CD00`;
+- all 36 instructions that address the focus variable at all are inside that same module.
+
+These four arguments were chosen because none of them depends on a disassembler staying in sync
+with the instruction stream — an earlier analysis pass desynced on the vtable (which is data) and
+got this wrong, so the claim is made in ways that cannot fail the same way.
+
+**What state 7 did** *(the code is established fact; what it was for is inference)*: its tick
+handler paints bits 3/2/1/0 of a RAM byte onto four indicator ids; entering or leaving it blanks
+all four and clears the mask; a press returns to state 6. That is an indicator-override display —
+show an arbitrary combination of four lamps — and it is the fine-grained sibling of state 8,
+"Identify", which lights everything. A diagnostic or annunciator display, most likely left over
+from development. It is a *display*, not a producer: the status bits it would have shown are still
+computed and still published to RAM by their one writer, so nothing host-visible is lost.
+
+And if the region somehow were entered, the worst case is bounded: the focus value 7 passes both
+comparisons, falls into the mic arm, advances the source once, and returns through a jump into a
+correctly framed function. Wrong, not a crash — and that bound holds even if all four arguments
+above were wrong.
+
+58 of state 7's 136 bytes are still spare. 36 orphaned bytes after the hook are left exactly as
+they were rather than filled with nops, so a diff against stock shows only what was deliberately
+changed.
+
+### Reproducible
+
+`patch/patch_r9.py` builds the patched images from your stock images deterministically. Rebuilding
+produces files byte-identical to the ones flashed and tested here, and it reports every byte it
+changed — currently 488, with `bytes changed outside descriptor regions: 0` for the descriptor
+rounds.
+
+---
+
+## If something goes wrong
+
+**Menu item 6, "Go back"**, fixes almost everything: the device keeps two firmware slots and the
+old one is still sitting there, so switching back is one command and one restart.
+
+[SAFETY.md](SAFETY.md) covers the rest, including the one genuinely unrecoverable mistake — a
+write at or above `0x80040000`, which aliases onto the bootloader's reset vector because the flash
+address decode ignores bit 18 — and how the tools here refuse to make it.
+
+---
+
+## Licence
+
+MIT, see [LICENSE](LICENSE).
+
+---
+---
+
+# For tinkering further
+
+Nothing below is needed to patch a ONE.
+
+## The vendor control protocol
+
+Flashing is **not DFU**. Vendor request `0xA9` goes to the running application, sub-command in
 `wValue`, index in `wIndex`, all integers big-endian. Vendor `0xA7` is a soft reset. There are two
 application banks and only the inactive one is ever written, so a bad image is one `activate` away
 from being undone.
 
 The control protocol was recovered from Apogee's own symbol names in their macOS updater binary:
 
-| bRequest | Dir | Len | Meaning |
-|---|---|---|---|
-| `0x28` | in | 3 | firmware version / hardware id |
-| `0x29` | in | 6 | knob and button event block — **read-to-clear**, byte 2 is a bitmask |
-| `0x33` | both | 1 | output attenuation |
-| `0x34` | both | 1 | mic preamp gain, signed dB |
-| `0x35` | both | 1 | output mute |
-| `0x36` | both | 1 | mic source: 0 internal, 1 external, 2 external + 48 V |
-| `0x3E` | both | 1 | instrument gain |
-| `0x48` | both | 1 | which level the knob adjusts: 0 instrument, 1 mic, 2 output |
+| bRequest | Dir  | Len | Meaning                                                              |
+| -------- | ---- | --- | -------------------------------------------------------------------- |
+| `0x28`   | in   | 3   | firmware version / hardware id                                       |
+| `0x29`   | in   | 6   | knob and button event block — **read-to-clear**, byte 2 is a bitmask |
+| `0x33`   | both | 1   | output attenuation                                                   |
+| `0x34`   | both | 1   | mic preamp gain, signed dB                                           |
+| `0x35`   | both | 1   | output mute                                                          |
+| `0x36`   | both | 1   | mic source: 0 internal, 1 external, 2 external + 48 V                |
+| `0x3E`   | both | 1   | instrument gain                                                      |
+| `0x48`   | both | 1   | which level the knob adjusts: 0 instrument, 1 mic, 2 output          |
 
 `bmRequestType` is `0x40` out / `0xC0` in, recipient **device**, so `wIndex` is 0 for all of
 these. On Windows this needs WinUSB bound to `MI_03`; on macOS libusb reaches it directly; on iOS
-it is not reachable at all, which is why round 9 exists.
+it is not reachable at all, which is why the code patch exists.
+
+Apogee left a lot of the device's state readable and writable this way, which is presumably how
+they debugged it, and it is why the whole front-panel model here could be established from outside
+before any disassembly: `0x48` selects focus, `0x29` reports the events, and the rest read back
+what each press did.
+
+Note on what "signed" means for the Windows side: Zadig/libwdi generates a **self-signed** catalog
+(`CN=USB\VID_0C60&PID_0017&MI_03 (libwdi autogenerated)`) and installs its own certificate, so
+Windows accepts it without test-signing mode. It is not a vendor or WHQL signature. There is no
+Apogee-provided driver for this interface that we know of; every patch round in this project ran
+through Zadig's binding. `usb/onev2_winusb.inf` binds the same inbox `WinUSB.sys` to the same
+interface by hand, if you prefer that to Zadig.
+
+## Doing it from the command line
+
+The launchers are a wrapper around these. Python 3.9+, `pyusb` with a libusb backend, plus
+`sounddevice`/`numpy` for the test's audio checks.
+
+```bash
+pip install pyusb libusb-package sounddevice numpy
+
+python usb/backup-stock.py                 # read your firmware out of the device
+python patch/patch_r9.py                   # build the patched images from it
+
+python usb/onev2_flash.py probe            # read-only: ids, descriptors, bank state
+python usb/onev2_flash.py flash firmware/ONEv2_USB_Audio_Image0.R9.patched.bin \
+                                firmware/ONEv2_USB_Audio_Image1.R9.patched.bin --yes
+python usb/onev2_flash.py activate 1       # whichever bank the flash just wrote
+python usb/r9-test.py                      # 26 automated checks + 5 guided long presses
+
+python usb/onev2_flash.py activate 0       # the undo button
+python usb/onev2_flash.py verify 1 firmware/ONEv2_USB_Audio_Image1.R9.patched.bin
+python usb/onev2_flash.py dump 0x24000 0x140b8 bank1.bin
+```
 
 ## Layout
 
 ```
+PATCH-ME-WINDOWS.bat     double-click on Windows
+PATCH-ME-MAC.command     double-click on macOS
+tools/      menu.py            what the launchers open
 patch/      patch_r9.py        the one to run; rounds 2..9, self-contained from stock images
             avr32asm.py        a small AVR32 assembler and an independent disassembler
             history/           rounds 2..8 on their own, for the record
-usb/        onev2_flash.py     the 0xA9 flasher: probe, dump, flash, verify, activate
+usb/        backup-stock.py    read the firmware out of your own device
+            onev2_flash.py     the 0xA9 flasher: probe, dump, flash, verify, activate
             r9-test.py         the acceptance test
+            onev2_winusb.inf   bind WinUSB to interface 3 without Zadig
             knob-probe*.py     watch the UI state machine from outside while you work the knob
             rate-probe.py      which sample rates the device really runs
             selector-probe.py  whether the host drives the selector unit
@@ -152,7 +334,7 @@ usb/        onev2_flash.py     the 0xA9 flasher: probe, dump, flash, verify, act
             capture-classreq2.bat + exercise-classreq.py + parse-classreq.py
                                ETW capture of the UAC2 class requests, decoded
 docs/       the reverse-engineering record
-firmware/   where your own images go
+firmware/   where your own images go. Nothing here is committed.
 ```
 
 ## Documentation
@@ -160,7 +342,7 @@ firmware/   where your own images go
 Current:
 
 - [onev2-ui-state-machine.md](docs/onev2-ui-state-machine.md) — the front-panel state machine,
-  every RAM variable and transition with its flash address, and the round-9 patch in full
+  every RAM variable and transition with its flash address, and the code patch in full
 - [onev2-control-protocol-RE.md](docs/onev2-control-protocol-RE.md) — the vendor protocol
 - [descriptor-diff-vs-knowngood.md](docs/descriptor-diff-vs-knowngood.md) — the descriptor, field
   by field, against a compliant reference
@@ -177,11 +359,3 @@ Superseded, kept because the reasoning is part of the record:
 - [ep0-map-verification.md](docs/ep0-map-verification.md) — includes a correction of a wrong
   refutation of mine, left visible on purpose
 - [handoff-cloud-*.md](docs/) — briefs written for other analysis sessions
-
-## Credits and licence
-
-MIT, see [LICENSE](LICENSE).
-
-Apogee, ONE and Maestro are trademarks of their owner. This project is unaffiliated
-reverse-engineering for interoperability, carried out on hardware the author owns. It
-redistributes no vendor firmware, software or documentation.

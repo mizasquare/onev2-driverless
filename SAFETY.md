@@ -3,6 +3,10 @@
 This writes firmware to hardware you own. Most of it is recoverable. Two things are not. Both are
 listed first.
 
+If you came here from the launcher's menu, the command lines below are what menu items 4 and 6
+run for you — you do not have to type them. The one worth remembering is **menu item 6, "Go
+back"**: it is the undo button, and it is almost always enough.
+
 ## The two that are not recoverable
 
 **1. Never write at or above `0x80040000`.** Flash is 256 KB and the address decode on this part
@@ -37,8 +41,10 @@ if it misbehaves, `activate` the other bank and you are back where you started, 
 python usb/onev2_flash.py activate 0     # or 1
 ```
 
-Keep your stock images. `python patch/patch_r9.py` rebuilds every patched image from them at any
-time, so the originals plus this repository are a complete restore path.
+Keep your stock images — menu item 2 is what produces them, and it is the one step not to skip.
+`python patch/patch_r9.py` rebuilds every patched image from them deterministically at any time,
+so the originals plus this repository are a complete restore path. Copy them somewhere off the
+computer as well.
 
 ## 48 V phantom power
 
@@ -77,8 +83,8 @@ it before running the test.
 
 ## If it goes wrong
 
-1. `python usb/onev2_flash.py activate 0` (or `1`) — switch to the other bank. This is almost
-   always enough.
+1. **Menu item 6, "Go back"** — or `python usb/onev2_flash.py activate 0` (or `1`). Switch to the
+   other bank. This is almost always enough.
 2. Still broken: re-flash your stock images into the inactive bank, then activate it.
 3. The device does not enumerate at all: the application is not starting. See reason 2 above —
    JTAG. Keeping a second unit on stock firmware is cheap insurance; the author did.

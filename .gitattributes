@@ -5,3 +5,6 @@
 *.inf   text eol=crlf
 *.bin   binary
 *.etl   binary
+
+# The Mac launcher must stay LF or bash will not run it.
+*.command text eol=lf
