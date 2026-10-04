@@ -555,10 +555,83 @@ def verify(items, label):
     return ok
 
 
+# ------------------------------------------------- input validation
+EXPECT_SIZE = {"ONEv2_USB_Audio_Image0.bin": 98488, "ONEv2_USB_Audio_Image1.bin": 229560}
+VIDPID = bytes.fromhex("600c1700")
+ISSUES = "https://github.com/mizasquare/onev2-driverless/issues"
+RULE = "-" * 78
+
+
+def _bcd(v):
+    return "%x.%02x" % (v >> 8, v & 0xFF)
+
+
+def stop(msg):
+    raise SystemExit("\n" + RULE + "\n" + msg.strip() + "\n")
+
+
+def precheck(name, data):
+    """Stop with something a person can act on, rather than an AssertionError, when the input is
+    not the firmware these patches were written against. The commonest real case is a device that
+    left the factory on a version older than 1.05 and was never updated."""
+    want = EXPECT_SIZE[name]
+    if len(data) != want:
+        stop("""%s is %s bytes. Apogee's file is %s.
+
+So this is not the factory image, or it did not copy across whole. Take a fresh
+backup (menu item 2), or re-extract it from the Maestro package."""
+             % (name, format(len(data), ","), format(want, ",")))
+
+    vers = sorted({struct.unpack("<H", data[i + 4:i + 6])[0]
+                   for i in range(8, len(data) - 6)
+                   if data[i:i + 4] == VIDPID and data[i - 8] == 0x12 and data[i - 7] == 0x01})
+    if not vers:
+        stop("%s holds no Apogee ONE device descriptor, so it is not ONEv2 firmware at all."
+             % name)
+
+    if vers != [0x0105]:
+        if vers == [0x0112]:
+            stop("""%s says it is firmware 1.12 -- which is what THIS patcher produces.
+
+You have fed the output back in as the input. firmware/ should hold the two
+UNPATCHED files; the patched ones are the *.R9.patched.bin beside them. Take a
+fresh backup from a device running factory firmware, or re-extract the originals
+from the Maestro package.""" % name)
+        stop("""%s is firmware version %s. These patches were written and tested against
+factory version 1.05, and only that.
+
+Every flash address and byte pattern used here was read out of that exact build.
+Run them against a different one and you could get an image that passes its
+checksum and then does not work -- and there is no USB rescue from that. So this
+stops rather than guessing.
+
+  * If yours is OLDER than 1.05, Apogee's Maestro package carries a firmware
+    updater that brings the ONE up to 1.05. Run that first, take a fresh backup,
+    and come back.
+
+  * If yours is NEWER than 1.05, these patches do not cover it. Please open an
+    issue saying which version you have -- as far as we know 1.05 was the last.
+    %s""" % (name, ", ".join(_bcd(v) for v in vers), ISSUES))
+
+    if sum(1 for i in range(len(data)) if data[i:i + len(CFG_SIG)] == CFG_SIG) != 2:
+        stop("""%s reports version 1.05 but does not carry the two 340-byte configuration
+descriptors this patcher expects, so it is not the 1.05 build these patches were
+made from. Please open an issue:
+    %s""" % (name, ISSUES))
+
+
 # ------------------------------------------------- main
 for name in ("ONEv2_USB_Audio_Image0.bin", "ONEv2_USB_Audio_Image1.bin"):
-    src = open(os.path.join(FWDIR, name), "rb").read()
+    path = os.path.join(FWDIR, name)
+    if not os.path.exists(path):
+        stop("""%s is not in firmware/.
+
+That directory is where YOUR OWN two factory images go -- none ship with this
+repository, because they are Apogee's. Menu item 2 reads them off your own
+device; failing that, extract them from Apogee's Maestro package.""" % name)
+    src = open(path, "rb").read()
     data = bytearray(src)
+    precheck(name, data)
     cfgs = [i for i in range(len(data)) if data[i:i + len(CFG_SIG)] == CFG_SIG]
     devs = []
     i = data.find(DEV_SIG)

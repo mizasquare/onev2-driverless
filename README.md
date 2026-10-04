@@ -19,6 +19,17 @@ Apogee's own iPad Maestro app keeps working after the patch.
 Verified on real hardware with the **patched firmware**. Patching itself has only been done from
 Windows.
 
+## What you need
+
+- An **Apogee ONE (2nd gen)**, USB `0c60:0017`, product string `ONEv2`. Not the Duet, not the
+  original ONE.
+- That device on **factory firmware 1.05**. This is the only version these patches were written
+  and tested against, and every tool here refuses anything else rather than guessing — the
+  addresses and byte patterns come from that exact build. If yours is older, Apogee's Maestro
+  package carries a firmware updater that brings it to 1.05; run that first. (Menu item **1** tells
+  you which version you have, and item **2** says so too.)
+- A Windows PC or a Mac to patch from, with a USB **data** cable.
+
 ## How to patch
 
 You do not need to know Python or open a terminal.

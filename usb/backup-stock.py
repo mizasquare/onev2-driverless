@@ -121,10 +121,26 @@ def main():
             return 1
 
     if not good:
+        vs = sorted({v for _, v in verdict.values() if v})
         print("""
-Neither bank holds factory firmware, so there is nothing here to save as the
-originals. If you patched this device, the backup you took beforehand is still
-your originals -- this cannot recreate them.""")
+Neither bank holds firmware version %s.
+
+What that means depends on which you are:
+
+  * You have patched this device before. The backup you took beforehand is
+    still your originals -- this cannot recreate them.
+
+  * You have never patched it, and it simply left the factory on a different
+    version. These patches were written and tested against 1.05 and only that,
+    so they will refuse your images anyway. Apogee's Maestro package carries a
+    firmware updater; bring the ONE up to 1.05 with it, then run this again.
+    If yours is NEWER than 1.05, please open an issue -- as far as we know 1.05
+    was the last.
+    https://github.com/mizasquare/onev2-driverless/issues""" % (
+            "%x.%02x" % (STOCK_BCD >> 8, STOCK_BCD & 0xFF)))
+        if vs:
+            print("\n  This device reports: %s"
+                  % ", ".join("%x.%02x" % (v >> 8, v & 0xFF) for v in vs))
         if not args.force:
             print("Nothing written. --force writes what is actually on the banks anyway.")
             return 2
