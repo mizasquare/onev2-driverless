@@ -90,4 +90,15 @@ it before running the test.
    other bank. This is almost always enough.
 2. Still broken: re-flash your stock images into the inactive bank, then activate it.
 3. The device does not enumerate at all: the application is not starting. See reason 2 above —
-   JTAG. Keeping a second unit on stock firmware is cheap insurance; the author did.
+   JTAG.
+
+If you own two ONEs, keeping one on stock firmware is cheap insurance. The author no longer has
+that second unit: its board was killed **after this work was finished**, converting its port to
+USB-C — a soldering job, nothing to do with firmware. Nothing in this project has damaged a
+device.
+
+So it now runs on a single ONE, and what stands in for the spare is the **other flash bank holding
+pristine factory firmware** plus backup image files kept off the machine. That is the arrangement
+to copy if you only have one: back up before you patch, keep the files somewhere other than the
+computer you patch from, and leave the bank you are not using on something you have already
+booted.
