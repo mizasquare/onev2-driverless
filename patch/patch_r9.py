@@ -63,6 +63,20 @@ Also carried: rounds 2-8 exactly as in patch_descriptors_r8.py, with bcdDevice -
 """
 import os, struct, hashlib
 
+if not __debug__:                       # python -O, or PYTHONOPTIMIZE set in the environment
+    import sys as _sys
+    _sys.exit(
+        "\n" + "-" * 78 + "\n"
+        "REFUSING to run with assertions disabled (-O, or PYTHONOPTIMIZE set in your\n"
+        "environment).\n\n"
+        "Much of the checking in this project is written as assert, and -O deletes every\n"
+        "one of them. Worse, the output still prints lines like \"fingerprints ok\" --\n"
+        "claims that nothing is left to establish. A tool that writes firmware to a device\n"
+        "with no USB rescue must not be able to say that falsely.\n\n"
+        "Unset PYTHONOPTIMIZE, or run python without -O, and try again.\n"
+        + "-" * 78)
+
+
 FWDIR = os.path.join(os.path.dirname(__file__), "..", "firmware")
 OUTDIR = FWDIR          # patched images land next to the stock ones, in firmware/
 CFG_SIG = bytes.fromhex("09025401040100c005")
@@ -568,6 +582,12 @@ def verify(items, label):
 
 
 # ------------------------------------------------- input validation
+STOCK_SHA = {
+    "ONEv2_USB_Audio_Image0.bin":
+        "e28421fef6df7cef41c39389d115573444a55aac88cecc49f6f17e1082b23e32",
+    "ONEv2_USB_Audio_Image1.bin":
+        "804d9d83fb5b3fcb58d08963e36e8e9488e99e3cafbd97299f691c228285f51f",
+}
 EXPECT_SIZE = {"ONEv2_USB_Audio_Image0.bin": 98488, "ONEv2_USB_Audio_Image1.bin": 229560}
 VIDPID = bytes.fromhex("600c1700")
 ISSUES = "https://github.com/mizasquare/onev2-driverless/issues"
@@ -624,6 +644,25 @@ stops rather than guessing.
   * If yours is NEWER than 1.05, these patches do not cover it. Please open an
     issue saying which version you have -- as far as we know 1.05 was the last.
     %s""" % (name, ", ".join(_bcd(v) for v in vers), ISSUES))
+
+    got = hashlib.sha256(data).hexdigest()
+    if got != STOCK_SHA[name]:
+        stop("""%s is not the factory image this project was built from.
+
+  this file   sha256 %s
+  expected    sha256 %s
+
+It is the right size, reports version 1.05 and carries the right descriptors, so
+it is ONEv2 firmware -- but not byte for byte the build every address in these
+patches was read out of. A dump taken off a healthy factory device reproduces
+Apogee's file exactly, so a difference here means something is off: a partial
+copy, a file that has been through an editor, or a 1.05 build we have never
+seen.
+
+If you dumped this from your own device, take it again. If it keeps coming out
+different, please open an issue with this hash -- a second 1.05 build existing
+would be worth knowing about:
+    %s""" % (name, got, STOCK_SHA[name], ISSUES))
 
     if sum(1 for i in range(len(data)) if data[i:i + len(CFG_SIG)] == CFG_SIG) != 2:
         stop("""%s reports version 1.05 but does not carry the two 340-byte configuration

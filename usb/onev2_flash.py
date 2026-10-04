@@ -48,12 +48,26 @@ SAFETY
   - `flash` refuses to run without --yes, never writes outside the target bank's app region,
     and aborts if a page will not verify.
 """
-import argparse, struct, sys, time, os
+import argparse, hashlib, struct, sys, time, os
 
 try:  # progress lines should appear while they happen, not in one burst at the end
     sys.stdout.reconfigure(line_buffering=True)
 except Exception:
     pass
+
+if not __debug__:                       # python -O, or PYTHONOPTIMIZE set in the environment
+    import sys as _sys
+    _sys.exit(
+        "\n" + "-" * 78 + "\n"
+        "REFUSING to run with assertions disabled (-O, or PYTHONOPTIMIZE set in your\n"
+        "environment).\n\n"
+        "Much of the checking in this project is written as assert, and -O deletes every\n"
+        "one of them. Worse, the output still prints lines like \"fingerprints ok\" --\n"
+        "claims that nothing is left to establish. A tool that writes firmware to a device\n"
+        "with no USB rescue must not be able to say that falsely.\n\n"
+        "Unset PYTHONOPTIMIZE, or run python without -O, and try again.\n"
+        + "-" * 78)
+
 
 VID, PID = 0x0C60, 0x0017
 A9 = 0xA9
@@ -229,14 +243,106 @@ class One:
 
 
 # ---------------------------------------------------------------- helpers
+ISSUES = "https://github.com/mizasquare/onev2-driverless/issues"
 STOCK_BCD = 0x0105
 BCD_AT = {0: 0x17600, 1: 0x37600}       # where each bank stores bcdDevice, so one page read tells
                                         # us which firmware is in a bank without scanning it
 
 
+# Images this project has actually run on hardware. Checked immediately before a write, because
+# the flasher is the last thing between a file and flash: everything before it can be skipped by
+# pointing it at a file directly.
+KNOWN_IMAGES = {
+    "e28421fef6df7cef41c39389d115573444a55aac88cecc49f6f17e1082b23e32":
+        "factory firmware 1.05, bank 0",
+    "804d9d83fb5b3fcb58d08963e36e8e9488e99e3cafbd97299f691c228285f51f":
+        "factory firmware 1.05, bank 1",
+    "dca0c51268eca7aaf03921004f06f6cf107df2a3f9b86b32677066ca0b63842a":
+        "R9 patched, bank 0",
+    "c872ea10379824b6df6709a0e0f5848c70c024d32816072494600c83bc242da5":
+        "R9 patched, bank 1",
+}
+CFG_SIG_ANY = bytes.fromhex("0902")
+VIDPID = bytes.fromhex("600c1700")
+
+
+def looks_like_firmware(blob):
+    """Does this file even claim to be ONEv2 firmware? Independent of version, so a 1.03 dump
+    still passes here -- this only rejects things that are not ONEv2 images at all."""
+    for i in range(8, len(blob) - 6):
+        if blob[i:i + 4] == VIDPID and blob[i - 8] == 0x12 and blob[i - 7] == 0x01:
+            return struct.unpack("<H", blob[i + 4:i + 6])[0]
+    return None
+
+
+def vet_image(blob, name, allow_unknown):
+    """Say what we are about to write, and stop if we cannot account for it."""
+    h = hashlib.sha256(blob).hexdigest()
+    known = KNOWN_IMAGES.get(h)
+    if known:
+        print("  %s: %s (sha256 %s)" % (os.path.basename(name), known, h[:16]))
+        return
+
+    ver = looks_like_firmware(blob)
+    if ver is None:
+        raise SystemExit(
+            "\n%s\nREFUSING to write %s.\n\n"
+            "It holds no Apogee ONE device descriptor, so it is not ONEv2 firmware at all --\n"
+            "wrong file, or a download that did not finish. sha256 %s\n\n"
+            "This one is not overridable. A file like this would be written, pass its CRC\n"
+            "because the device computes that itself, and then not boot.\n%s"
+            % ("-" * 78, os.path.basename(name), h[:16], "-" * 78))
+
+    if not allow_unknown:
+        raise SystemExit(
+            "\n%s\nREFUSING to write %s: this project has never run this image.\n\n"
+            "  sha256   %s\n"
+            "  contents firmware %x.%02x\n\n"
+            "It does look like ONEv2 firmware, so this may well be your own build -- but it is\n"
+            "not one of the four images that have been tested on hardware, and the device\n"
+            "computes the CRC itself, so a broken image still gets blessed and still boots\n"
+            "into nothing. There is no USB rescue from that.\n\n"
+            "If you built this yourself and know what is in it, pass:\n"
+            "    --yes-i-built-this-image\n\n"
+            "If you did NOT build it, stop. Rebuild from your own backup with patch_r9.py\n"
+            "instead of flashing a file of unknown provenance.\n%s"
+            % ("-" * 78, os.path.basename(name), h, ver >> 8, ver & 0xFF, "-" * 78))
+
+    print("  %s: NOT a known image, firmware %x.%02x, sha256 %s"
+          % (os.path.basename(name), ver >> 8, ver & 0xFF, h[:16]))
+    print("     writing it anyway because --yes-i-built-this-image was given.")
+
+
 def _ver(v):
     return "firmware %x.%02x" % (v >> 8, v & 0xFF)
 
+
+R9_BCD = 0x0112
+
+
+def version_note(bcd):
+    """Say plainly what a firmware version means for this toolchain. Printed by probe so that
+    somebody on the wrong version learns it at step 1, before a backup has been taken under
+    factory filenames and before anything has been built."""
+    if bcd == R9_BCD:
+        return "  -> this is the R9 patched firmware from this repository."
+    if bcd == STOCK_BCD:
+        return "  -> factory firmware 1.05, which is what these patches are written for."
+    return ("\n  " + "-" * 74 + "\n"
+            "  This is firmware %s. These patches are written and tested for FACTORY 1.05\n"
+            "  and nothing else -- every flash address in them came out of that one build.\n"
+            "\n"
+            "  Nothing here will patch this device as it stands, and forcing it past the\n"
+            "  checks would write code at addresses that mean something different in your\n"
+            "  firmware. There is no USB rescue if that fails to boot.\n"
+            "\n"
+            "  What to do: Apogee's Maestro package carries a firmware updater. Bring the\n"
+            "  ONE up to 1.05 with it, then start again from step 1 here.\n"
+            "\n"
+            "  If yours is NEWER than 1.05, please open an issue -- as far as we know 1.05\n"
+            "  was the last one Apogee shipped.\n"
+            "  %s\n"
+            "  " + "-" * 74) % (_ver(bcd).replace("firmware ", ""), ISSUES)
 
 def bank_version(one, bank):
     """The bcdDevice a bank reports, read from its one known offset."""
@@ -338,6 +444,7 @@ def cmd_probe(args):
             print("device descriptor: VID %04x PID %04x bcdDevice %x.%02x bcdUSB %04x"
                   % (struct.unpack("<H", dd[8:10])[0], struct.unpack("<H", dd[10:12])[0],
                      bcd >> 8, bcd & 0xFF, struct.unpack("<H", dd[2:4])[0]))
+            print(version_note(bcd))
         except Exception as e:
             print("device descriptor: unavailable (%s)" % e)
         try:
@@ -434,6 +541,9 @@ def cmd_flash(args):
                              % (os.path.basename(name), len(src), start))
         if not args.yes:
             raise SystemExit("refusing to write without --yes")
+
+        print("what is about to be written:")
+        vet_image(src, name, args.yes_i_built_this_image)
 
         # Do not spend the last bank that still holds factory firmware. Once both banks hold a
         # patched build, "go back" only switches between two patched builds, and the device can no
@@ -659,6 +769,9 @@ def main():
     p.add_argument("--activate", action="store_true",
                    help="also switch the active image and reset (otherwise do it separately, "
                         "so the write stays reversible)")
+    p.add_argument("--yes-i-built-this-image", action="store_true",
+                   help="write an image this project has never run. Named so it cannot be typed "
+                        "by accident or copied from someone else's command line.")
     p.add_argument("--overwrite-factory", action="store_true",
                    help="allow overwriting the last bank that still holds factory firmware")
     p.add_argument("--dry-run", action="store_true", help="walk the sequence without any OUT transfer")

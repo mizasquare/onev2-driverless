@@ -25,6 +25,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 import onev2_flash as F
 
+if not __debug__:                       # python -O, or PYTHONOPTIMIZE set in the environment
+    import sys as _sys
+    _sys.exit(
+        "\n" + "-" * 78 + "\n"
+        "REFUSING to run with assertions disabled (-O, or PYTHONOPTIMIZE set in your\n"
+        "environment).\n\n"
+        "Much of the checking in this project is written as assert, and -O deletes every\n"
+        "one of them. Worse, the output still prints lines like \"fingerprints ok\" --\n"
+        "claims that nothing is left to establish. A tool that writes firmware to a device\n"
+        "with no USB rescue must not be able to say that falsely.\n\n"
+        "Unset PYTHONOPTIMIZE, or run python without -O, and try again.\n"
+        + "-" * 78)
+
+
 BANKS = {0: (0x4000, 0x180B8), 1: (0x24000, 0x380B8)}
 SIZES = {0: 98488, 1: 229560}
 CFG_SIG = bytes.fromhex("09025401040100c005")
@@ -170,7 +184,15 @@ after that this tool covers you.""" % (good[0], other, other))
             "bcdDevice %#06x, running bank %d, main at %#010x" % (bcd, active, main_at), ""]
     for bank in good:
         blob = files[bank]
-        p = os.path.join(out, "ONEv2_USB_Audio_Image%d.bin" % bank)
+        ver = verdict[bank][1]
+        # A bank that is not factory firmware NEVER gets the factory filename. Those two names are
+        # what the patcher reads, so writing 1.03 or a patched dump under them quietly poisons the
+        # pipeline -- and the person most likely to end up here is the one who skipped the reading.
+        if ver == STOCK_BCD:
+            fname = "ONEv2_USB_Audio_Image%d.bin" % bank
+        else:
+            fname = "ONEv2_USB_Audio_Image%d.fw%x.%02x.bin" % (bank, ver >> 8, ver & 0xFF)
+        p = os.path.join(out, fname)
         if os.path.exists(p) and not args.overwrite:
             print("  %s already exists, left alone (use --overwrite to replace it)" % p)
             continue
@@ -178,7 +200,10 @@ after that this tool covers you.""" % (good[0], other, other))
         h = hashlib.sha256(blob).hexdigest()
         print("  %s  %d bytes" % (p, len(blob)))
         print("      sha256 %s" % h)
-        info.append("ONEv2_USB_Audio_Image%d.bin  %d bytes  sha256 %s" % (bank, len(blob), h))
+        if ver != STOCK_BCD:
+            print("      ^ named for what it holds, not the factory name. The patcher reads only")
+            print("        ONEv2_USB_Audio_Image{0,1}.bin, so this cannot be mistaken for stock.")
+        info.append("%s  %d bytes  sha256 %s" % (fname, len(blob), h))
     open(os.path.join(out, "BACKUP-INFO.txt"), "w", encoding="utf-8").write("\n".join(info) + "\n")
 
     print("\nKeep %s. %s your way back to exactly this firmware, and the patcher"
