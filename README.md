@@ -39,7 +39,7 @@ below.
 
 You do not need to know any Python, or open a terminal. Two steps.
 
-### Windows
+### Windows (tested but still try on your risk)
 
 > Run end to end on Windows 11 — launcher, backup, build, flash, roll back and the full test. It
 > is still your hardware and your risk.
@@ -89,7 +89,7 @@ signature. There is no Apogee-supplied Windows driver for this device that we ha
 
 Then **double-click `PATCH-ME-WINDOWS.bat`.**
 
-### macOS
+### macOS (untested. try on your risk)
 
 > **Patching *from* a Mac has not been done yet.** The patched firmware itself is verified on
 > macOS — record, play and switching the input from the knob all work — but this launcher, the
