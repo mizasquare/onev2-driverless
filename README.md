@@ -34,16 +34,50 @@ You do not need to know any Python, or open a terminal. Two steps.
 
 ### Windows
 
-1. **One-time:** tell Windows to let us talk to the ONE's control interface. Run
-   [Zadig](https://zadig.akeo.ie/) as Administrator, tick **Options → List All Devices**, pick the
-   line that reads **`iAP Interface (Interface 3)`**, set the driver to **WinUSB**, press
-   **Install**.
+Windows needs to be told to let us reach the ONE's control channel, and **what you have to do
+depends on which firmware the device is still running.** Find out first — this is read-only:
 
-   > **Pick interface 3 and nothing else.** Interface 0 is the sound card. If you bind WinUSB to
-   > that one by mistake, the ONE stops working as an audio device until you undo it in Device
-   > Manager.
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\win-usb-state.ps1
+```
 
-2. **Double-click `PATCH-ME-WINDOWS.bat`.**
+It prints what Windows currently thinks the ONE is and tells you which of the cases below you are
+in. (Menu item 1 runs it for you too.)
+
+**Why it differs.** The firmware's own descriptor decides how Windows splits the device up. Factory
+firmware declares interfaces 0–3 as one audio function, so Windows makes a *single* child device
+for all four and loads the audio driver on it — which then fails, because interface 3 is not audio.
+There is no separate node for interface 3, so there is nothing for WinUSB to attach to. The patch
+corrects that declaration to interfaces 0–2, after which interface 3 becomes its own node.
+
+| Your device | What Windows shows | What to do |
+| --- | --- | --- |
+| **Factory firmware** (never patched) | one node, audio driver, **problem 10**; no `MI_03` | bind WinUSB to the **composite parent** |
+| **Already patched** | `MI_00` working as a sound card, plus `MI_03` | bind WinUSB to **`MI_03` only** |
+
+**Factory firmware — bind the parent.** Run [Zadig](https://zadig.akeo.ie/) as Administrator →
+**Options → List All Devices** → **Options → untick "Ignore Hubs or Composite Parents"** (without
+this the parent is not in the list at all) → pick **`ONEv2 (Composite Parent)`**, USB ID
+`0C60 0017` with no interface number → driver **WinUSB** → **Replace Driver**, and accept the
+"you are about to modify a system driver" warning.
+
+Audio stays dead while that binding is in place. It was already dead — that is the problem 10
+above — so nothing is lost. **Undo it once you have patched:** Device Manager → Universal Serial
+Bus devices → `ONEv2` → Uninstall device → tick **"Attempt to remove the driver for this
+device"** → unplug and replug. Windows then drives the patched device as a sound card, and
+interface 3 reappears as its own node.
+
+**Already patched — bind interface 3.** Zadig as Administrator → **Options → List All Devices** →
+pick **`iAP Interface (Interface 3)`** → **WinUSB** → Install.
+
+> **Pick interface 3 and nothing else** in this case. Interface 0 is the sound card; binding
+> WinUSB to it takes the audio away until you undo it in Device Manager.
+
+What "signed" means here: Zadig/libwdi generates a **self-signed** catalog and installs its own
+certificate, so Windows accepts it without test-signing mode. It is not a vendor or WHQL
+signature. There is no Apogee-supplied Windows driver for this device that we have found.
+
+Then **double-click `PATCH-ME-WINDOWS.bat`.**
 
 ### macOS
 
@@ -94,11 +128,21 @@ device:
 **Menu item 2 reads the firmware out of your ONE** and writes the two files everything else is
 built from. The device can read its own flash over the same channel used for writing, and a stock
 image file turns out to be nothing but a 4-byte reset vector, zero padding, and the bank's
-contents — so the files can be rebuilt exactly as Apogee shipped them. Checked against Apogee's
-own `ONEv2_USB_Audio_Image0.bin` and `Image1.bin`: both come back byte-identical.
+contents — so the files can be rebuilt exactly as Apogee shipped them.
 
-The backup refuses to run if your device is not on factory firmware, so a device you already
-patched cannot quietly be mistaken for a clean source.
+Verified on hardware, not just on paper: a device rolled back to factory firmware was dumped, and
+the rebuilt files match Apogee's own byte for byte —
+
+```
+ONEv2_USB_Audio_Image0.bin   sha256 e28421fef6df7cef41c39389d115573444a55aac88cecc49f6f17e1082b23e32
+ONEv2_USB_Audio_Image1.bin   sha256 804d9d83fb5b3fcb58d08963e36e8e9488e99e3cafbd97299f691c228285f51f
+```
+
+— and building the patched images from those dumped files reproduces the images already validated
+on the device, byte for byte again.
+
+Each bank is judged on its own, so the backup tells you exactly what it found and will not pass
+off a patched bank as a factory one.
 
 <details>
 <summary>The other way: extract them from Maestro</summary>
@@ -161,8 +205,13 @@ The two stored copies of the descriptor are identical except that the patched se
 the device actually served.
 
 The single change that mattered most was removing the selector unit: **iPadOS will not build a
-UAC2 capture path through one.** Everything else is compliance tidying that Windows and macOS
+UAC2 capture path through one.** Most of the rest is compliance tidying that Windows and macOS
 tolerated and the iPad did not.
+
+Not all of it was tolerated, though. A device rolled back to factory firmware and plugged into
+Windows 11 reports the audio function with **problem code 10, "this device cannot start"** — the
+inbox `usbaudio2.sys` rejects the stock descriptor outright. That is measured on hardware, not
+inferred, and it is the plainest statement of why this project exists.
 
 ### The code — 82 bytes
 
@@ -285,12 +334,12 @@ they debugged it, and it is why the whole front-panel model here could be establ
 before any disassembly: `0x48` selects focus, `0x29` reports the events, and the rest read back
 what each press did.
 
-Note on what "signed" means for the Windows side: Zadig/libwdi generates a **self-signed** catalog
-(`CN=USB\VID_0C60&PID_0017&MI_03 (libwdi autogenerated)`) and installs its own certificate, so
-Windows accepts it without test-signing mode. It is not a vendor or WHQL signature. There is no
-Apogee-provided driver for this interface that we know of; every patch round in this project ran
-through Zadig's binding. `usb/onev2_winusb.inf` binds the same inbox `WinUSB.sys` to the same
-interface by hand, if you prefer that to Zadig.
+On the Windows side, Zadig/libwdi's catalog is self-signed
+(`CN=USB\VID_0C60&PID_0017&MI_03 (libwdi autogenerated)`) and it installs its own certificate, so
+Windows accepts it without test-signing mode. `usb/onev2_winusb.inf` binds the same inbox
+`WinUSB.sys` to interface 3 by hand if you prefer that to Zadig — but note it names
+`VID_0C60&PID_0017&MI_03`, which **only exists once the device is patched**. On factory firmware
+the binding has to go on the composite parent instead, as the Windows section explains.
 
 ## Doing it from the command line
 
@@ -320,6 +369,7 @@ python usb/onev2_flash.py dump 0x24000 0x140b8 bank1.bin
 PATCH-ME-WINDOWS.bat     double-click on Windows
 PATCH-ME-MAC.command     double-click on macOS
 tools/      menu.py            what the launchers open
+            win-usb-state.ps1  read-only: what Windows thinks the ONE is, and what to do
 patch/      patch_r9.py        the one to run; rounds 2..9, self-contained from stock images
             avr32asm.py        a small AVR32 assembler and an independent disassembler
             history/           rounds 2..8 on their own, for the record

@@ -89,32 +89,33 @@ def pause():
 
 # ------------------------------------------------------------------ the steps
 
+def win_state():
+    """Ask Windows what it currently thinks the ONE is. Read-only."""
+    script = os.path.join(HERE, "win-usb-state.ps1")
+    try:
+        subprocess.call(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                         "-File", script], cwd=ROOT)
+    except Exception as e:
+        print("  (could not run the Windows check: %s)" % e)
+
+
 def step_check():
     print("""
 Reading the device. This only reads -- it writes nothing.
 """)
     rc = run("usb/onev2_flash.py", "probe")
+    if WIN:
+        win_state()
     if rc != 0:
         print("""
-That did not work. The usual reasons, in order of likelihood:
+The device did not answer. If the check above already told you what to do,
+do that. Otherwise:
 
-  1. The ONE is not plugged into THIS computer with a USB cable.
-     It has to be this computer, not the iPad or another Mac.""")
-        if WIN:
-            print("""
-  2. Windows has not been told to let us talk to the ONE's interface 3.
-     Run Zadig (https://zadig.akeo.ie/), tick Options -> List All Devices,
-     pick the line that says "iAP Interface (Interface 3)", choose WinUSB,
-     press Install. One time only, and it needs Administrator.
-
-     Pick interface 3 and nothing else. Interface 0 is the sound card; if you
-     bind that one by mistake the ONE stops working as an audio device until
-     you undo it in Device Manager.""")
-        else:
-            print("""
-  2. Another program is holding the device. Quit Maestro if it is running.""")
-        print("""
-  3. The cable is charge-only. Some USB-C cables carry no data.""")
+  * Is the ONE plugged into THIS computer? It has to be this one, not the
+    iPad and not another Mac.
+  * Is the cable a data cable? Plenty of USB-C cables only carry power.""")
+        if not WIN:
+            print("""  * Is something else holding it? Quit Maestro if it is running.""")
     pause()
 
 
