@@ -52,6 +52,61 @@ Input-type enum order (0/1/2) inferred from firmware display strings, in this or
 "Internal Mic + Instrument", "External Mic + Instrument", "External 48V + Instrument".
 VERIFY by reading 0xC0,0x36 before trusting the mapping.
 
+## The internal mixer and meters, measured on hardware
+
+The request table above came from Apogee's own symbol names. These entries have now been exercised
+on a real ONEv2 (firmware R9, no Apogee software installed or running anywhere). Everything in
+this section is measured unless marked otherwise.
+
+### What answers, and with how many channels
+
+| bRequest | meaning | channels that answer | values read |
+| --- | --- | --- | --- |
+| `0x4C` | mixer fader | **4** (wIndex 0–3) | 48, 48, 48, 48 |
+| `0x4D` | mixer pan | **2** (wIndex 0–1) | 64, 64 |
+| `0x4E` | mixer solo | **3** (wIndex 0–2) | 0, 0, 0 |
+| `0x4F` | mixer mute | **3** (wIndex 0–2) | 1, 1, 0 |
+
+wIndex past those ranges stalls. Reproduced with a fresh handle per read, so the counts are real
+and not a damaged handle.
+
+**[inferred]** The asymmetry suggests the topology. Pan exists only where a mono source has to be
+placed in a stereo bus, so channels 0 and 1 are the two mono inputs, channel 2 is the stereo
+software return (already stereo, no pan), and channel 3 has a fader but no mute, solo or pan —
+a master. The mute values `1, 1, 0` match a normal DAW workflow: both inputs muted, software
+return open.
+
+### Writes are accepted, unvalidated, and inaudible
+
+`0x4C` accepts and reads back **0–255 with no clamping**, including values far outside any
+plausible fader range. The firmware stores the byte as given.
+
+Unmuting channel 0 (`0x4F` wIndex 0 = 0) and setting its fader to 70 produced **no audible
+monitoring at all**, at either 70 or 48, and the front-panel headphone indicator stayed solid —
+so `0x4F` is not the device mute that `0x35` drives. Every value was restored afterwards.
+
+### The meters are live without any host software
+
+`0x14 GetMeterData` returns 16 bytes: **eight 16-bit slots, big-endian**, of which two carry
+signal and the rest are zero.
+
+| slot | bytes | what it is | evidence |
+| --- | --- | --- | --- |
+| A | 0–1 | **mic preamp** | follows `0x36`: Internal mic reads 132–1104 with room noise, switching to External with nothing on the XLR drops it to 26–181 and flattens at ~28 |
+| B | 2–3 | **instrument input** | steady 8–12 regardless of `0x36` — the noise floor of an empty jack |
+
+### What this says
+
+The DSP front end **runs with no Apogee software present**: it digitises both inputs and meters
+them continuously, with the session token at zero and both mixer channels muted. So the thing that
+is inactive is not the DSP but specifically the **monitor-mix path to the headphone output**.
+
+**[hypothesis, untested]** `0x3F` "session token" reads **0** here, and a control app claiming a
+session is the obvious candidate for what opens that path. Nothing has been written to `0x3F`.
+
+This matters for anyone thinking of driving the monitor mix from firmware: setting the fader and
+mute registers is demonstrably not sufficient.
+
 ## Firmware update (DFU) — ApoUSB class
 
 Vendor DFU, NOT standard DFU-class descriptor. Methods:
