@@ -79,6 +79,3 @@ Everything comes with **no warranty** (MIT, see [LICENSE](LICENSE)). You flash a
 affiliated with, authorised by, endorsed by or sponsored by it; the names identify the hardware
 only. No Apogee firmware, software or documentation is redistributed here. This is independent
 reverse engineering for interoperability, on hardware the author owns.*
-
-Authors: **Sukwoon Song** (hardware, decisions, testing) and **Claude** (reverse engineering and
-code).
