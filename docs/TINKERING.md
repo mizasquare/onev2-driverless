@@ -105,7 +105,7 @@ Current:
   field, against a compliant reference
 - [bootloader-dump-findings.md](bootloader-dump-findings.md) — the stock Atmel DFU bootloader, why
   a watchdog reset does **not** reach it, and why there is no fallback for a bad application
-- [FLASHING.md](FLASHING.md) — the `0xA9` protocol in detail
+- [FLASHING.md](FLASHING.md) — the `0xA9` protocol, the flash geometry, and what the flasher refuses
 - [mfi-iap-usbc-watchdog.md](mfi-iap-usbc-watchdog.md) — MFi/iAP, the USB-C transition, and the
   ~9.11 s watchdog (which was measured not to bite while idle, and was never patched)
 - [firmware-control-path.md](firmware-control-path.md) — the call chain from a vendor request to the

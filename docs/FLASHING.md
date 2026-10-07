@@ -1,86 +1,88 @@
-# ONEv2 — flashing path & safety (from Mac updater disassembly)
+# Flashing
 
-> **CORRECTED 2026-10-02 — read `win-flash/README.md` instead for the flash mechanism.**
-> The "vendor DFU" framing below is wrong for the ONE. Re-disassembling the real entry point
-> `oneFirmwareUpdateFromFile` shows the ONE never enters DFU mode: flashing is vendor request
-> **0xA9** against the *running* device (`0c60:0017`), with no PID change and no re-enumeration.
-> The ApoUSB DFU code (and the PID `0x8017` claim) does not apply to this product — the
-> Thesycon INF's "Apogee DFU" is PID `0x8016`, the Duet's. The *geometry* and *safety* claims
-> below (inactive bank only, start `0x4000`/`0x24000`, length `0x1C000`, bootloader `0x0-0x4000`
-> never written, page read-back verification, no image signature) were re-verified and still
-> hold.
+How `usb/onev2_flash.py` writes the ONE, and what it refuses to do. You do not need this to patch a
+device, the launcher runs it for you. If you run it by hand, read [SAFETY.md](../SAFETY.md) first.
 
-Interoperability/repair on the owner's own device. Flashing uses the device's OWN vendor DFU
-mechanism (Apogee updater). All facts below are **[C]** confirmed by disassembling
-`One Firmware Updater` (Mac, x86_64) unless tagged **[I]**.
+The sequence was read out of Apogee's own macOS updater (x86_64, symbols intact) and has since been
+run on two units. Flashing is **not DFU**: the device keeps its PID and never enters a bootloader mode.
 
-## Flash geometry — the safety-critical part [C]
+## The channel
 
-`oneFirmwareUpdate` (0x10000632b):
-- reads active image index via vendor cmd **0xA9 sub-6** (`getActiveImage`) and the running main
-  address via **0xA9 sub-7** (`getAddressOfMain`).
-- writes the **inactive** bank only. Write start = **0x4000** (bank0) or **0x24000** (bank1);
-  end = start + **0x1C000**. So it writes the app region `0x4000–0x20000` or `0x24000–0x40000`.
-- **The bootloader/DFU region `0x0–0x4000` is NEVER written.** This is the guarantee the
-  recovery plan relies on.
-- after writing, switches the active image (`setActiveImage`) and reboots (`softReset`).
-- each page is verified by read-back ("Flash page did not match. Retrying flash write."); a
-  byte-modified image passes as long as the device accepts what it is sent (no separate
-  whole-image signature was found; the tail 4 bytes are not a content checksum).
+Vendor request `0xA9`, sent to the **running** device (`0c60:0017`). `bmRequestType` is `0x40` out
+and `0xC0` in, recipient device, sub-command in `wValue`, index in `wIndex`, all integers big-endian.
+On Windows this needs WinUSB on interface 3 ([WINDOWS-SETUP.md](WINDOWS-SETUP.md)).
 
-File→flash mapping is identity on `0x4000–0x20000` (must be, or stock images wouldn't boot), so
-a patch at file offset X (within that range) lands at flash `0x80000000+X`. Our R2 patch at file
-`0x1107c` → flash `0x8001107c` = the WDT CTRL literal. Correct.
+| wValue | Dir | wIndex | Len | Name | Notes |
+| ------ | --- | ------ | --- | ---- | ----- |
+| 0 | out | 0 | 4 | SetFlashAddress | `0x80000000` + file offset |
+| 1 | out | 0..7 | 64 | WriteChunk | eight chunks make one 512-byte page |
+| 2 | out | 0 | 1 | CommitFlashPage | data `00` |
+| 3 | in | 0..7 | 64 | ReadChunk | read-back |
+| 4 | in | image | 4 | GetUserPageCRC | computed by the device |
+| 5 | out | image | 4 | SetUserPageCRC | |
+| 6 | in | 0 | 4 | GetActiveImage | the answer is byte 3 |
+| 6 | out | image | 1 | SetActiveImage | data `00` |
+| 7 | in | 0 | 4 | GetAddressOfMain | |
 
-## DFU entry & recoverability [C mechanism, I bootloader fallback]
+Vendor `0xA7` (out, one byte `00`) is a soft reset.
 
-- DFU entry is **app-triggered**: `EnterDFU` sends a control request (byte 0x21) to the RUNNING
-  device, which re-enumerates to the DFU identity (PID 0x8017). **The app must run to enter DFU.**
-- Therefore: if a flashed app still boots and answers USB, it is always re-flashable. The R2
-  patch does not touch boot/USB/clock code, so the app runs normally → fully recoverable.
-- Unknown [I]: whether the bootloader offers an independent DFU entry (button-at-power-on) or
-  auto-falls-back to the other bank if the active app is invalid. We don't have the bootloader
-  image. So treat "app that fails to enumerate" as the dangerous outcome.
-- Backstops: (1) bootloader never overwritten; (2) dual bank — keep one bank stock; (3) a second
-  physical unit as spare.
+## Geometry
 
-## Risk ladder
+File offset X is flash `0x80000000 + X`. There are two app banks:
 
-- **R2-only patch (WDT disable):** app boots and runs unchanged apart from the watchdog →
-  safe first flash, validates the whole pipeline. **Start here.**
-- **R1/R3 (descriptor/selector) patches:** can affect enumeration. Flash only after R2 proves the
-  pipeline, keep the other bank stock, and keep the spare unit untouched until proven.
+| Bank | Window written | Image file |
+| ---- | -------------- | ---------- |
+| 0 | `0x4000` to `0x20000` | `Image0.bin`, 98,488 bytes |
+| 1 | `0x24000` to `0x40000` | `Image1.bin`, 229,560 bytes, the same body at +`0x20000` |
 
-## How to flash (two paths)
+Each window is `0x1C000` long. The bootloader at `0x0` to `0x4000` is outside both, so a flash never
+writes it. The 16 KB between the banks is unused.
 
-### Path A — Apogee's own updater with a patched image (recommended for the first flash)
-Lowest risk: reuses Apogee's tested flash sequence; the updater does NOT checksum the .bin file,
-it just writes its bytes.
-1. Take Apogee's `One Firmware Updater.app` (Intel Mac; Apogee says Intel + older macOS).
-2. Replace `Contents/Resources/ONEv2_USB_Audio_Image0.bin` and `...Image1.bin` with our patched
-   copies (`*.patched.bin`).
-3. Force an update: bump `Contents/Resources/OneUpdaterVersions.plist` `firmware_version`
-   above the device's (device reports 1.5.0 via vendor 0x28), e.g. to `1.5.1`. Otherwise the
-   updater shows "All Firmware Up to Date" and does nothing.
-4. Run it; it flashes the inactive bank and switches. Watch for a DFU error (non-destructive =
-   device rejected the image) vs success.
-Note: the Windows updater path (if located) avoids the Intel-Mac requirement; TBD.
+Address decode ignores bit 18, so `0x80040000` aliases the bootloader's reset vector. The flasher
+refuses any flash address outside `0x80000000` to `0x8003FFFF`. See [SAFETY.md](../SAFETY.md).
 
-### Path B — our own libusb flasher (later, for fine control)
-We have the full vendor DFU protocol (EnterDFU req 0x21 → StartDFU → WriteDFUBlock(offset,buf,len)
-→ page-verify → EndDFU/SetImageType/SetRevertId → softReset) and the 0xA9 management sub-commands.
-A ~150-line pyusb tool could flash a chosen bank with exact bytes and let us flash ONE bank while
-keeping the other stock. Higher control, but we implement the sequence, so do this only after
-Path A proves the device accepts a modified image.
+**Which bank gets written:** the one the device is not running from. The flasher decides by
+GetAddressOfMain (below `0x80024000` means running bank 0, so write bank 1). If GetActiveImage
+disagrees it warns and trusts the address, as Apogee's updater does.
 
-## Open items before a real flash
-1. Confirm the device accepts a byte-modified image (first Path-A attempt answers this; rejection
-   is non-destructive).
-2. Locate/confirm a bootloader-level recovery (button-at-boot?) for the worst case — or accept the
-   spare-unit backstop.
-3. Windows updater availability (to avoid the Intel-Mac requirement).
+## One flash, step by step
 
-## Current patched artifacts
-- `ONEv2_USB_Audio_Image0.patched.bin`, `ONEv2_USB_Audio_Image1.patched.bin` — R2 only (WDT
-  disabled): 2 bytes changed per bank at file 0x1107f/0x11083 (bank0) and +0x20000 (bank1),
-  `0x..001301 → 0x..001300` (CTRL EN bit cleared). Verified by re-disassembly.
+1. Refuse if more than one ONE is attached. The device re-enumerates during a write, and the flasher
+   finds its own unit again by serial number, so a second unit could end up with half an image.
+2. Check both files against the guards below.
+3. For each 512-byte page of the file that falls inside the window: SetFlashAddress, 8 x WriteChunk,
+   CommitFlashPage, 8 x ReadChunk, compare. A mismatch retries the page, up to 40 attempts. A lost
+   handle is re-acquired and the page redone. About 11 seconds per bank. Only pages the file holds
+   are written, the flasher does not pad to the window.
+4. Read the CRC the device computed (GetUserPageCRC) and store it back (SetUserPageCRC). **This is
+   what makes the bootloader launch the bank** instead of failing over to the other one. Refused if
+   no page was written.
+5. Stop. The device is still running the old bank. `activate N` does SetActiveImage and then a soft
+   reset. `flash --activate` does both in one go, the launcher does not use it and asks you first.
+
+Nothing signs an image. The only checks are the per-page read-back and a CRC the device computes
+itself, so any bytes pass, including a broken image. That is why `SAFETY.md` says there is no USB
+rescue for an image that boots into nothing.
+
+## What the flasher refuses
+
+- To write without `--yes`. `--dry-run` walks the whole sequence with no writes.
+- A flash address outside `0x80000000` to `0x8003FFFF`, or a page outside the target window.
+- A file that is not ONEv2 firmware at all. No override.
+- A ONEv2 image that is not one of the four tested ones (factory bank 0 and 1, R9 bank 0 and 1, by
+  SHA-256), unless you pass `--yes-i-built-this-image`.
+- Overwriting the last bank that still holds factory firmware, unless you pass `--overwrite-factory`.
+- A file shorter than its bank's start or longer than its end, which usually means the two image
+  arguments were swapped.
+- Running with assertions disabled (`python -O`), because much of the checking is written as `assert`.
+
+## What rests on what
+
+- **Read from Apogee's updater:** the sub-commands, the page sequence, the bank windows. That updater
+  writes a fixed window (start `0x4000` or `0x24000`, length `0x1C000`) while both image files are
+  shorter. Whether it pads or truncates is **unverified**, which is why this project does not rely
+  on the free tail past the end of each image.
+- **Measured on hardware:** flashing, read-back, activate and rollback on two units
+  ([EVIDENCE-AND-LIMITS.md](EVIDENCE-AND-LIMITS.md) says how far that goes). Reads at `x` and
+  `x + 0x40000` returning identical data, on five address pairs.
+- **Not known:** how any of this behaves on a firmware version other than 1.05.
