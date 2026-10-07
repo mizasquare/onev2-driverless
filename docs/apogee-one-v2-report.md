@@ -1,5 +1,14 @@
 # Apogee ONE v2 분석 종합 보고서
 
+> **Historical, kept as a record.** This is the initial scouting report, written on 2026-10-01
+> before the patching work in this repository began. Its conclusions were overtaken by later work,
+> notably on recovery and on why Windows rejects the descriptor, so do not rely on it. For current
+> facts read [SAFETY.md](../SAFETY.md), [WHAT-THE-PATCH-CHANGES.md](WHAT-THE-PATCH-CHANGES.md) and
+> [EVIDENCE-AND-LIMITS.md](EVIDENCE-AND-LIMITS.md).
+>
+> It is written in Korean and has not been translated. If you are curious, run it through a
+> translator.
+
 작성 2026-10-01. 대상: Apogee ONE 2세대("ONE for iPad & Mac" 2013 / "ONE for Mac" 2016), USB `0x0C60:0x0017`, 제품 문자열 `ONEv2`, 펌웨어 `1.05`.
 
 태그: **[확인]** 로컬 바이너리·디스크립터·커널 소스 등 1차 근거로 직접 검증 / **[문서]** Apogee·MS 등 공식 문서 근거 / **[추정]** 정황 근거, 미확인.
