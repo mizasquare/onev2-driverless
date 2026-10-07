@@ -1,5 +1,24 @@
 # Apogee ONE v2 — 목표와 펌웨어 요구사항 명세
 
+> **Superseded, kept as a record.** Written on 2026-10-01, before any patch existed. Both goals
+> were met, but not by the route planned below:
+>
+> - **R2 (watchdog):** the arm site is right, but the watchdog was never patched. A passive
+>   16-minute watch saw no re-enumeration while the device sat idle
+>   ([handoff-cloud-followup.md](handoff-cloud-followup.md)).
+> - **R3 (selector):** the "confirmed conclusion" below is wrong. The firmware does answer UAC2
+>   class requests, including `SET CUR` on the selector (same file, section 2c). The selector was
+>   removed from the descriptor anyway, because iPadOS cannot build a capture path through one.
+> - **R4 (iAP):** capture did not need iAP. The iPad failure was in the descriptor
+>   ([WHAT-THE-PATCH-CHANGES.md](WHAT-THE-PATCH-CHANGES.md)).
+> - The vendor request notes in the last section are unreliable. `0xA7` is a soft reset, not a
+>   flash operation.
+>
+> The R1 to R5 numbering here has nothing to do with the patch rounds r2 to r9 elsewhere in this
+> repo. For what was actually done, read [WHAT-THE-PATCH-CHANGES.md](WHAT-THE-PATCH-CHANGES.md) and
+> [EVIDENCE-AND-LIMITS.md](EVIDENCE-AND-LIMITS.md). Everything below is the plan as written, wrong
+> parts included.
+
 확정 2026-10-01. 기기: Apogee ONE v2, USB 0c60:0017, MCU Atmel AVR32 UC3A3/A4, 펌웨어 1.05.
 
 ## 사용할 환경과 목표 (우선순위)

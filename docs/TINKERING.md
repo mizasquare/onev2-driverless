@@ -1,13 +1,14 @@
 # For tinkering further
 
-Nothing here is needed to patch a ONE.
+Nothing here is needed to patch a ONE. If you run these by hand, read [SAFETY.md](../SAFETY.md) first.
 
 ## The vendor control protocol
 
 Flashing is **not DFU**. Vendor request `0xA9` goes to the running application, sub-command in
 `wValue`, index in `wIndex`, all integers big-endian. Vendor `0xA7` is a soft reset. There are two
-application banks and only the inactive one is ever written, so a bad image is one `activate` away
-from being undone.
+application banks and only the inactive one is ever written, so a failed or unwanted flash is undone
+by simply not activating it. Once activated, an image that passes its CRC but then fails to start
+leaves no USB rescue, only JTAG.
 
 The control protocol was recovered from Apogee's own symbol names in their macOS updater binary:
 
@@ -23,7 +24,9 @@ The control protocol was recovered from Apogee's own symbol names in their macOS
 | `0x48`   | both | 1   | which level the knob adjusts: 0 instrument, 1 mic, 2 output          |
 
 `bmRequestType` is `0x40` out / `0xC0` in, recipient **device**, so `wIndex` is 0 for all of
-these. On Windows this needs WinUSB bound to `MI_03` (see [WINDOWS-SETUP.md](WINDOWS-SETUP.md));
+these. On Windows this needs WinUSB bound to interface 3: `MI_03` on patched firmware, the
+composite parent on factory firmware, which has no interface-3 node (see
+[WINDOWS-SETUP.md](WINDOWS-SETUP.md));
 on macOS libusb reaches it directly; on iOS third-party code cannot open the interface at all,
 which is why the code patch exists. Apple's MFi/iAP path to the same interface does still work
 there — Apogee's own iPad app uses it and keeps working after the patch — but that route is not
@@ -56,6 +59,11 @@ python usb/onev2_flash.py verify 1 firmware/ONEv2_USB_Audio_Image1.R9.patched.bi
 python usb/onev2_flash.py dump 0x24000 0x140b8 bank1.bin
 ```
 
+`flash` refuses any image this project has not tested on hardware (override:
+`--yes-i-built-this-image`) and refuses to overwrite the last bank that still holds factory firmware
+(override: `--overwrite-factory`). Both guards exist because the device computes the CRC itself, so
+a broken image still passes it.
+
 ## Layout
 
 ```
@@ -69,11 +77,12 @@ patch/      patch_r9.py        the one to run; rounds 2..9, self-contained from 
 usb/        backup-stock.py    read the firmware out of your own device
             onev2_flash.py     the 0xA9 flasher: probe, dump, flash, verify, activate
             r9-test.py         the acceptance test
-            onev2_winusb.inf   bind WinUSB to interface 3 without Zadig
+            onev2_winusb.inf   bind WinUSB to interface 3 by hand instead of Zadig (patched firmware only)
             knob-probe*.py     watch the UI state machine from outside while you work the knob
             rate-probe.py      which sample rates the device really runs
             selector-probe.py  whether the host drives the selector unit
             verdict.ps1        Windows device nodes, audio endpoints, usbaudio2 event history
+            idle-watch.ps1     passive: does the ~9 s watchdog bite while nothing uses the device
             capture-classreq2.bat + exercise-classreq.py + parse-classreq.py
                                ETW capture of the UAC2 class requests, decoded
 docs/       the reverse-engineering record
@@ -98,12 +107,22 @@ Current:
   a watchdog reset does **not** reach it, and why there is no fallback for a bad application
 - [FLASHING.md](FLASHING.md) — the `0xA9` protocol in detail
 - [mfi-iap-usbc-watchdog.md](mfi-iap-usbc-watchdog.md) — MFi/iAP, the USB-C transition, and the
-  ~9.11 s watchdog
+  ~9.11 s watchdog (which was measured not to bite while idle, and was never patched)
+- [firmware-control-path.md](firmware-control-path.md) — the call chain from a vendor request to the
+  input switch, from Ghidra decompilation (Korean)
 
-Superseded, kept because the reasoning is part of the record:
+Superseded or historical, kept because the reasoning is part of the record:
 
+- [project-plan.md](project-plan.md) — the original goals and requirements R1 to R5. Both goals
+  were met, but R2, R3 and R4 turned out differently than planned, and its R numbers clash with the
+  patch rounds. Read its banner first
 - [CODE-PATCH-PLAN.md](CODE-PATCH-PLAN.md) — a plan to hook the UAC2 class handler that turned out
-  to be unnecessary; the firmware already answers class requests
+  to be unnecessary; the firmware already answers class requests (the correction is in
+  [handoff-cloud-followup.md](handoff-cloud-followup.md), section 2c)
 - [ep0-map-verification.md](ep0-map-verification.md) — includes a correction of a wrong refutation
   of mine, left visible on purpose
+- [apogee-one-v2-report.md](apogee-one-v2-report.md) — the first overall analysis report, written
+  before any patch (Korean)
+- [external-notes-verification.md](external-notes-verification.md) — third-party research notes
+  checked against their primary sources, also from before the patch (Korean)
 - `handoff-cloud-*.md` — briefs written for other analysis sessions
