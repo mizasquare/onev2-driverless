@@ -39,7 +39,7 @@ SetMicInputType disasm (addr 0x100004f36):
 0x3E rw   1  Instrument input gain (signed char)
 0x3F rw   1  Session token
 0x44 rw   1  Grouping (bool)
-0x48 rd   1  GetEncoderSelect            <-- which level the knob currently adjusts
+0x48 rw   1  GetEncoderSelect            <-- which level the knob currently adjusts (SET works too, measured: usb/r9-test.py)
 0x4C rw   *  Mixer channel fader (wIndex=channel)
 0x4D rw   *  Mixer channel pan
 0x4E rw   *  Mixer channel solo

@@ -1,6 +1,6 @@
 # ONEv2 펌웨어 입력 소스 제어 경로 (Ghidra 디컴파일로 확정)
 
-도구: Ghidra 12.1.4 헤드리스 + AVR32(`avr32:BE:32:default`), 베이스 `0x80000000`, 자동분석 후 디컴파일. 대상 `ONEv2_USB_Audio_Image0.bin`(뱅크0). 디컴파일 원문은 `resources/disasm/decompiled/`.
+도구: Ghidra 12.1.4 헤드리스 + AVR32(`avr32:BE:32:default`), 베이스 `0x80000000`, 자동분석 후 디컴파일. 대상 `ONEv2_USB_Audio_Image0.bin`(뱅크0).
 
 주소는 함수 자동탐지 결과의 Ghidra 기본 이름(`FUN_<addr>`)이다. 모두 **[확인]** — 실제 디컴파일로 검증.
 
