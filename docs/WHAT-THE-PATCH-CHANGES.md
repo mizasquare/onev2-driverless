@@ -45,16 +45,16 @@ Windows 11 reports the audio function with **problem code 10, "this device canno
 inbox `usbaudio2.sys` rejects the stock descriptor outright. That is measured on hardware, not
 inferred, and it is the plainest statement of why this project exists.
 
-## Apogee's own software still works
+## Apogee's own software still worked ONCE
 
 Changing the IAD moved interface 3 out of the audio function, which is the correction that makes
 Windows expose it separately — and which could plausibly have hidden it from Apogee's own software
 instead. It did not.
 
-Observed on an M2 iPad Pro: **Apogee's iPad Maestro app, written for the Lightning era, still
-drives the mixer and the device controls over USB-C after the patch.** Apple's MFi/iAP path to
+Observed on an M2 iPad Pro: **Apogee's iPad Maestro app, still
+drives the mixer and the device controls over USB-C after the patch. under certain condition unverified** Apple's MFi/iAP path to
 interface 3 is untouched, so the vendor app keeps working alongside the class-compliant audio —
-you are not trading one for the other.
+you are not trading one for the other, at least a certain condition! (further work)
 
 What *is* out of reach on iOS is opening interface 3 yourself: third-party code gets no direct
 access to it, which is why the knob had to learn to switch the mic source in firmware rather than
