@@ -28,8 +28,9 @@ KEY FINDING (from oneFirmwareUpdateFromFile @0x100006343):
     IN  7  wIndex=0        len 4   GetAddressOfMain() -> addr
   And vendor request 0xA7 OUT, len 1, data [0x00] = soft reset ("resetting ONEv2...").
 
-  Per-page sequence, retried up to 10x on mismatch (updater: "Flash page did not match.
-  Retrying flash write." / gives up with "Too many bad flash writes."):
+  Per-page sequence. The updater retries a page on mismatch, up to 10x (its log: "Flash page
+  did not match. Retrying flash write." / gives up with "Too many bad flash writes."). This
+  flasher allows 40 attempts per page, since a handle lost to a re-enumeration uses one too:
     SetFlashAddress -> 8x WriteChunk -> CommitFlashPage -> 8x ReadChunk -> memcmp(512)
 
   Bank geometry: bank0 app = file 0x4000..0x20000, bank1 app = file 0x24000..0x40000
@@ -40,7 +41,7 @@ WINDOWS PREREQUISITE
   Raw EP0 needs WinUSB bound to one interface of the device. Use interface 3 ("iAP Interface",
   MI_03) — it has no driver (problem code 28), so binding WinUSB there leaves usbaudio2 on the
   audio function, i.e. we can flash AND watch Windows accept/reject the descriptors in the same
-  session.  See win-flash-setup.md.
+  session.  See docs/WINDOWS-SETUP.md, including the factory-firmware case, which has no MI_03.
 
 SAFETY
   - `probe` and `dump` are READ-ONLY. Run `probe` first: it validates the whole decode by
@@ -670,10 +671,16 @@ AC_IFACE = 0           # the AudioControl interface number
 CUR, RANGE = 0x01, 0x02
 
 def cmd_classreq(args):
-    """READ-ONLY: issue the standard UAC2 class GET requests a host driver needs, and report
-    which ones the firmware answers vs STALLs. This is what Event 38 ('a control request sent to
-    device has failed') is about, and it defines exactly what the firmware code patch must
-    implement. GET only -- nothing is set."""
+    """READ-ONLY: send the standard UAC2 class GET requests a host driver would, aimed at the
+    interface we hold, and print what comes back. GET only -- nothing is set.
+
+    Read the result with care. The only interface libusb will let us address is the one we
+    claimed (3, not the AudioControl interface 0 that usbaudio2 owns), and the firmware's class
+    handler appears to check the interface byte of wIndex. So a STALL or I/O error here is most
+    likely an interface-mismatch rejection, NOT evidence that the handler is missing: an ETW
+    capture of the real host traffic showed every class request answered (docs/
+    handoff-cloud-followup.md, Experiment 3). For what the firmware really answers, use
+    capture-classreq2.bat with exercise-classreq.py and parse-classreq.py."""
     probes = [
         ("CLOCK_SOURCE 1  sampling frequency  GET CUR",   CUR,   0x01, 1, 4),
         ("CLOCK_SOURCE 1  sampling frequency  GET RANGE", RANGE, 0x01, 1, 64),
@@ -692,7 +699,8 @@ def cmd_classreq(args):
         #   "Operation not supported" = libusb refused to send it. Says nothing about the device.
         # libusb only routes an interface-recipient request to an interface we have CLAIMED, and
         # we hold interface 3, not the AudioControl interface 0 (usbaudio2 owns that). So aim at
-        # the interface we hold: the firmware STALLs class requests regardless of which one.
+        # the interface we hold. The firmware then rejects them as an interface mismatch, so a
+        # STALL here says nothing about whether the handler exists (see the docstring).
         print("bmRequestType 0xA1 (IN|class|interface), wIndex = entity<<8 | interface %d" % args.ac_iface)
         print("  'Pipe error' = device STALLed.  'Operation not supported' = libusb would not send it.\n")
         for label, breq, cs, entity, length in probes:
@@ -783,8 +791,9 @@ def main():
     p.add_argument("--no-reset", dest="reset", action="store_false", default=True)
     p.set_defaults(func=cmd_activate)
 
-    p = sub.add_parser("classreq", help="READ-ONLY: which UAC2 class GET requests does the "
-                                        "firmware answer? (what Event 38 is about)")
+    p = sub.add_parser("classreq", help="READ-ONLY: send UAC2 class GETs at the interface we "
+                                        "hold. A STALL is an interface mismatch, not proof of a "
+                                        "missing handler (see the docstring)")
     p.add_argument("--ac-iface", type=int, default=3,
                    help="interface number to put in wIndex. Default 3 (the one we claim, so the "
                         "request actually reaches the device); 0 is the real AudioControl "
